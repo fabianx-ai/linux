@@ -37,6 +37,8 @@ subarch-$(CONFIG_MODULES) += ../kernel/module.o
 
 subarch-$(CONFIG_BPF_JIT) += ../net/bpf_jit_comp.o ../entry/clearbhb.o ../lib/nops.o
 
+subarch-$(CONFIG_UPROBES) += ../kernel/uprobes.o ../lib/insn.o ../lib/inat.o
+
 USER_OBJS := bugs_$(BITS).o ptrace_user.o fault.o
 
 $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS) \

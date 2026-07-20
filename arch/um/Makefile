@@ -123,6 +123,18 @@ include $(srctree)/arch/x86/Makefile.cpufeaturemasks
 archprepare: $(cpufeaturemasks.hdr)
 	$(Q)$(MAKE) $(build)=$(HOST_DIR)/um include/generated/user_constants.h
 
+###
+# inat-tables.c for the subarch-built x86 instruction decoder (uprobes).
+# Same generator as arch/x86/lib/Makefile:17-25; ARCH=um never runs that
+# Makefile, so produce the (arch-constant) table here.
+
+inat_tables.c := arch/x86/lib/inat-tables.c
+
+$(inat_tables.c): $(srctree)/arch/x86/tools/gen-insn-attr-x86.awk $(srctree)/arch/x86/lib/x86-opcode-map.txt
+	$(AWK) -f $^ > $@
+
+archprepare: $(inat_tables.c)
+
 LINK-$(CONFIG_LD_SCRIPT_STATIC) += -static
 LINK-$(CONFIG_LD_SCRIPT_DYN) += -no-pie
 LINK-$(CONFIG_LD_SCRIPT_DYN_RPATH) += -Wl,-rpath,/lib
