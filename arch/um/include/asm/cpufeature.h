@@ -6,6 +6,7 @@
 
 #if defined(__KERNEL__) && !defined(__ASSEMBLER__)
 
+#include <asm/cpufeaturemasks.h>
 #include <asm/asm.h>
 #include <linux/bitops.h>
 
