@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/uaccess.h>
 #include <linux/sched/debug.h>
+#include <linux/uprobes.h>
 #include <asm/current.h>
 #include <asm/tlbflush.h>
 #include <arch.h>
@@ -403,6 +404,27 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 			printk(KERN_ERR "Bus error - the host /dev/shm or /tmp "
 			       "mount likely just ran out of space\n");
 		panic("Kernel mode signal %d", sig);
+	}
+
+	/*
+	 * Uprobe traps: a guest-user int3 arrives as SIGTRAP, and so does the
+	 * completion of an out-of-line single-step. si_code tells them apart:
+	 * TRAP_TRACE is always the single-step; a breakpoint hit is
+	 * TRAP_BRKPT in seccomp mode, but the host reports int3 stops with
+	 * SI_KERNEL under PTRACE_SYSEMU (verified on the host, F13). Feed
+	 * them to the uprobe core directly (the arm64/riscv pattern); if
+	 * consumed, the guest task must not see a signal.
+	 */
+	if (IS_ENABLED(CONFIG_UPROBES) && sig == SIGTRAP && si) {
+		struct pt_regs *pregs = container_of(regs, struct pt_regs, regs);
+
+		if (si->si_code == TRAP_TRACE) {
+			if (uprobe_post_sstep_notifier(pregs))
+				return;
+		} else if (si->si_code == TRAP_BRKPT || si->si_code == SI_KERNEL) {
+			if (uprobe_pre_sstep_notifier(pregs))
+				return;
+		}
 	}
 
 	arch_examine_signal(sig, regs);
