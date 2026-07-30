@@ -9,6 +9,7 @@ enum {
 };
 
 #include <linux/compiler.h>
+#include <uapi/asm/ptrace.h>
 #include <asm/ptrace-generic.h>
 
 #define user_mode(r) UPT_IS_USER(&(r)->regs)
