@@ -6,7 +6,10 @@
 # regsets, stub page, signal frame, vdso) and each becomes an object
 # here as it is written (M3b bring-up, per DESIGN.md §6).
 
-obj-y = alternatives.o
+obj-y = alternatives.o ptrace.o
+
+# Native arm64 checksum objects (csum_ipv6_magic, do_csum).
+subarch-y = ../lib/csum.o
 
 $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
 targets += user-offsets.s
