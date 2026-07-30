@@ -35,6 +35,8 @@
 #define ELF_DATA	ELFDATA2LSB
 #define ELF_ARCH	EM_AARCH64
 
+typedef unsigned long elf_greg_t;
+
 #define ELF_PLAT_INIT(regs, load_addr)    do { \
 	int _i; \
 	for (_i = 0; _i < 31; _i++) \
