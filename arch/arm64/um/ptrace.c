@@ -128,3 +128,38 @@ task_user_regset_view(struct task_struct *tsk)
 {
 	return &user_uml_view;
 }
+
+/* read/write a word at location addr in the USER area (guest ptrace) */
+int peek_user(struct task_struct *child, long addr, long data)
+{
+	unsigned long tmp;
+
+	if ((addr & 7) || addr < 0)
+		return -EIO;
+
+	tmp = 0;  /* Default return condition */
+	if (addr < MAX_REG_OFFSET)
+		tmp = getreg(child, addr);
+	return put_user(tmp, (unsigned long *) data);
+}
+
+int poke_user(struct task_struct *child, long addr, long data)
+{
+	if ((addr & 7) || addr < 0)
+		return -EIO;
+
+	if (addr < MAX_REG_OFFSET)
+		return putreg(child, addr, data);
+	return -EIO;
+}
+
+/*
+ * Backend ptrace dispatch: everything not covered by the generic
+ * regset path (which flows through task_user_regset_view). TLS and
+ * debug-register requests land with their own surfaces later.
+ */
+long subarch_ptrace(struct task_struct *child, long request,
+		    unsigned long addr, unsigned long data)
+{
+	return -EIO;
+}
