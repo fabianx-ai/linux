@@ -2,6 +2,7 @@
 #define __NO_FORTIFY
 #include <linux/types.h>
 #include <linux/module.h>
+#include <linux/kconfig.h>
 
 /*
  * This file exports some critical string functions and compiler
@@ -20,7 +21,13 @@
 EXPORT_SYMBOL(strstr);
 #endif
 
-#ifndef __x86_64__
+/*
+ * Export these string functions when the backend does not provide its
+ * own memcpy (the x86-64 backend pulls in arch/x86/lib/memcpy_64.o;
+ * i386 and other backends need the exports). CONFIG-based rather than
+ * host-compiler predefines so cross-builds resolve correctly.
+ */
+#if !IS_ENABLED(CONFIG_UML_X86) || !IS_ENABLED(CONFIG_64BIT)
 #undef memcpy
 extern void *memcpy(void *, const void *, size_t);
 EXPORT_SYMBOL(memcpy);
