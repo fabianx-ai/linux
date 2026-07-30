@@ -21,8 +21,12 @@
 
 #define STUB_MMAP_NR __NR_mmap
 
-/* TLS restore syscall the stub filter must allow (backend-provided) */
-#define STUB_TLS_SYSCALL_NR __NR_set_tls
+/*
+ * TLS restore: arm64 has no native set_tls syscall — TPIDR_EL0 is
+ * EL0-writable and the stub restores it via msr directly. This value
+ * (the compat set_tls number) only keeps the filter table's shape.
+ */
+#define STUB_TLS_SYSCALL_NR (0x0f0000 + 5)
 #define MMAP_OFFSET(o) (o)
 
 #define __syscall_clobber "memory"
