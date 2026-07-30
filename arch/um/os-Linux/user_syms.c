@@ -22,12 +22,12 @@ EXPORT_SYMBOL(strstr);
 #endif
 
 /*
- * Export these string functions when the backend does not provide its
- * own memcpy (the x86-64 backend pulls in arch/x86/lib/memcpy_64.o;
- * i386 and other backends need the exports). CONFIG-based rather than
- * host-compiler predefines so cross-builds resolve correctly.
+ * Export these string functions only when the backend does not provide
+ * its own memcpy (selected UML_SUBARCH_MEMCPY): the x86-64 backend pulls
+ * in arch/x86/lib/memcpy_64.o, the arm64 backend uses generic
+ * lib/string.c with no __HAVE_ARCH_* — i386 needs the exports.
  */
-#if !IS_ENABLED(CONFIG_UML_X86) || !IS_ENABLED(CONFIG_64BIT)
+#if !IS_ENABLED(CONFIG_UML_SUBARCH_MEMCPY)
 #undef memcpy
 extern void *memcpy(void *, const void *, size_t);
 EXPORT_SYMBOL(memcpy);
