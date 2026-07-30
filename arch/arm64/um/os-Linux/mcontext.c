@@ -10,6 +10,7 @@
 #include <sys/ucontext.h>
 #include <asm/ptrace.h>
 #include <sysdep/ptrace.h>
+#include <sysdep/ptrace_user.h>
 #include <sysdep/mcontext.h>
 #include <arch.h>
 
