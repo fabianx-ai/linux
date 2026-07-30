@@ -10,6 +10,11 @@
 #define __SYSDEP_STUB_H
 
 #include <stddef.h>
+#include <asm/unistd.h>
+#include <sys/mman.h>
+#include <signal.h>
+#include <as-layout.h>
+#include <stub-data.h>
 #include <sysdep/ptrace_user.h>
 #include <generated/asm-offsets.h>
 #include <linux/stddef.h>
