@@ -9,6 +9,6 @@ extern int host_gdt_entry_tls_min;
 #define GDT_ENTRY_TLS_MAX (GDT_ENTRY_TLS_MIN + GDT_ENTRY_TLS_ENTRIES - 1)
 
 /* arch-neutral name for the asm-offsets re-export (backend-provided) */
-#define UM_GDT_ENTRY_TLS_ENTRIES GDT_ENTRY_TLS_ENTRIES
+#define UM_TLS_ENTRIES GDT_ENTRY_TLS_ENTRIES
 
 #endif
