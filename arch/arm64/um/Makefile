@@ -6,7 +6,7 @@
 # regsets, stub page, signal frame, vdso) and each becomes an object
 # here as it is written (M3b bring-up, per DESIGN.md §6).
 
-obj-y = delay.o os-Linux/ sys_call_table.o ptrace.o signal.o
+obj-y = delay.o os-Linux/ sys_call_table.o ptrace.o signal.o syscalls.o bugs.o fault.o sysrq.o tls.o
 
 USER_OBJS := ptrace_user.o
 
