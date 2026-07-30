@@ -25,3 +25,6 @@ kapigen:
 
 # USER_OBJS (%_user.o) get the host-side compile flags via these rules.
 include $(srctree)/arch/um/scripts/Makefile.rules
+
+UNPROFILE_OBJS := stub_segv.o
+CFLAGS_stub_segv.o := $(CFLAGS_NO_HARDENING)
