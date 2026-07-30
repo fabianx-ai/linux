@@ -99,6 +99,8 @@ extern struct cpuinfo_um boot_cpu_data;
 
 #define cache_line_size()	(boot_cpu_data.cache_alignment)
 
+#define STACKSLOTS_PER_LINE 4
+
 #define current_sp() ({ unsigned long _sp; \
 			asm volatile("mov %0, sp" : "=r" (_sp)); _sp; })
 #define current_bp() ({ unsigned long _bp; \

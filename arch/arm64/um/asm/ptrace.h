@@ -33,6 +33,9 @@ struct user_regs_struct {
 #define PT_REGS_ORIG_SYSCALL(r) ((r)->regs.gp[HOST_X8])
 #define PT_REGS_SYSCALL_RET(r) ((r)->regs.gp[HOST_X0])
 
+/* frame pointer is x29 on arm64 */
+#define PT_REGS_BP(r) ((r)->regs.gp[HOST_X29])
+
 #define PT_FIX_EXEC_STACK(sp) do ; while(0)
 
 #define profile_pc(regs) PT_REGS_IP(regs)
