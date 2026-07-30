@@ -44,17 +44,3 @@ int __vdso_gettimeofday(struct __kernel_old_timeval *tv, struct timezone *tz)
 }
 int gettimeofday(struct __kernel_old_timeval *, struct timezone *)
 	__attribute__((weak, alias("__vdso_gettimeofday")));
-
-__kernel_old_time_t __vdso_time(__kernel_old_time_t *t)
-{
-	register long x8 __asm__("x8") = __NR_time;
-	register long x0 __asm__("x0") = (long)t;
-
-	asm volatile("svc #0"
-		: "+r" (x0)
-		: "r" (x8)
-		: "memory");
-
-	return x0;
-}
-__kernel_old_time_t time(__kernel_old_time_t *t) __attribute__((weak, alias("__vdso_time")));

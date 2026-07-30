@@ -18,8 +18,6 @@ VERSION {
 		__vdso_clock_gettime;
 		gettimeofday;
 		__vdso_gettimeofday;
-		time;
-		__vdso_time;
 	local: *;
 	};
 }
