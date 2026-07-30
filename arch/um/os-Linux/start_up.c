@@ -194,7 +194,8 @@ fail:
 
 static void __init check_ptrace(void)
 {
-	int pid, syscall, n, status;
+	int pid, n, status;
+	long syscall;
 
 	os_info("Checking that ptrace can change system call numbers...");
 	pid = start_ptraced_child();
