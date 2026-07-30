@@ -5,7 +5,9 @@ endmenu
 
 config UML_ARM64
 	def_bool y
-	select GENERIC_HWEIGHT
+
+config GENERIC_HWEIGHT
+	def_bool y
 
 config 64BIT
 	def_bool y
