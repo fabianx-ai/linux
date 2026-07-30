@@ -22,3 +22,6 @@ include/generated/user_constants.h: $(obj)/user-offsets.s FORCE
 PHONY += kapigen
 kapigen:
 	$(Q)$(MAKE) $(build)=arch/arm64/tools kapi
+
+# USER_OBJS (%_user.o) get the host-side compile flags via these rules.
+include $(srctree)/arch/um/scripts/Makefile.rules
