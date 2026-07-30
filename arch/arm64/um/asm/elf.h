@@ -41,14 +41,19 @@
 		(regs)->regs.gp[_i] = 0; \
 } while (0)
 
-#define ELF_CORE_COPY_REGS(pr_reg, _regs) do { \
-	int _i; \
-	for (_i = 0; _i < 31; _i++) \
-		(pr_reg)[_i] = (_regs)->regs.gp[_i]; \
-	(pr_reg)[31] = (_regs)->regs.gp[HOST_SP]; \
-	(pr_reg)[32] = (_regs)->regs.gp[HOST_PC]; \
-	(pr_reg)[33] = (_regs)->regs.gp[HOST_PSTATE]; \
-} while (0)
+static inline void um_elf_core_copy_regs(elf_greg_t *pr_reg,
+					 struct pt_regs *_regs)
+{
+	int i;
+
+	for (i = 0; i < 31; i++)
+		pr_reg[i] = (_regs)->regs.gp[i];
+	pr_reg[31] = (_regs)->regs.gp[HOST_SP];
+	pr_reg[32] = (_regs)->regs.gp[HOST_PC];
+	pr_reg[33] = (_regs)->regs.gp[HOST_PSTATE];
+}
+
+#define ELF_CORE_COPY_REGS(pr_reg, _regs) um_elf_core_copy_regs(pr_reg, _regs)
 
 #define ELF_PLATFORM_FALLBACK "aarch64"
 
