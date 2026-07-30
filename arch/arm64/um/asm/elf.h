@@ -55,7 +55,7 @@ static inline void um_elf_core_copy_regs(elf_greg_t *pr_reg,
 	pr_reg[33] = (_regs)->regs.gp[HOST_PSTATE];
 }
 
-#define ELF_CORE_COPY_REGS(pr_reg, _regs) um_elf_core_copy_regs(pr_reg, _regs)
+#define ELF_CORE_COPY_REGS(pr_reg, _regs) um_elf_core_copy_regs(pr_reg, _regs);
 
 #define ELF_PLATFORM_FALLBACK "aarch64"
 
