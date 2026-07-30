@@ -27,6 +27,11 @@ static inline void arch_flush_thread(struct arch_thread *thread)
 {
 }
 
+static inline void arch_copy_thread(struct arch_thread *from,
+				    struct arch_thread *to)
+{
+}
+
 struct thread_struct {
 	struct pt_regs *segv_regs;
 	struct task_struct *prev_sched;
