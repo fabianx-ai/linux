@@ -8,6 +8,10 @@
 #define __UM_ARM64_ELF_H
 
 #include <asm/ptrace.h>
+#include <asm/user.h>
+#include <skas.h>
+
+#define CORE_DUMP_USE_REGSET
 
 #define R_AARCH64_NONE		0
 #define R_AARCH64_ABS64		257

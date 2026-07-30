@@ -25,6 +25,14 @@ struct user_regs_struct {
 	__u64 pstate;
 };
 
+/* fpsimd register frame (identical to uapi/asm/ptrace.h) */
+struct user_fpsimd_struct {
+	__uint128_t vregs[32];
+	__u32 fpsr;
+	__u32 fpcr;
+	__u32 __reserved[2];
+};
+
 #include <asm/ptrace-generic.h>
 
 #define user_mode(r) UPT_IS_USER(&(r)->regs)
