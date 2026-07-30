@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# arm64 backend build glue for UML (ARCH=um, SUBARCH=arm64).
+# Mirrors arch/x86/Makefile.um's role: image layout, linker emulation,
+# backend cflags. Surfaces (ptrace/signal/stub/ldscripts) arrive with
+# the port; until then the build refuses at the first unwritten
+# surface, by design (M3b sequencing: additive only, x86 cannot break).
+
+START := 0x60000000
+
+KBUILD_LDFLAGS	+= -EL $(call ld-option, -maarch64elf, -maarch64linux -z norelro)
+
+ELF_ARCH	:= aarch64
+ELF_FORMAT	:= elf64-littleaarch64
+CHECKFLAGS	+= -D__aarch64__
