@@ -7,6 +7,7 @@
 #include <linux/linkage.h>
 #include <linux/sys.h>
 #include <linux/cache.h>
+#include <asm/unistd.h>
 #include <asm/syscall.h>
 
 extern asmlinkage long sys_ni_syscall(unsigned long, unsigned long,
