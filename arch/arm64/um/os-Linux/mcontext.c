@@ -77,10 +77,10 @@ static void *get_fpstate(struct stub_data *data, mcontext_t *mcontext,
 	for (h = (void *)mcontext->__reserved; h->magic;
 	     h = (void *)h + h->size) {
 		if (h->magic == FPSIMD_MAGIC) {
-			if ((void *)(h + 1) + sizeof(struct user_fpsimd_struct) >
+			if ((void *)(h + 1) + UM_FPSIMD_SIZE >
 			    (void *)data->sigstack + sizeof(data->sigstack))
 				return NULL;
-			*fp_size = sizeof(struct user_fpsimd_struct);
+			*fp_size = UM_FPSIMD_SIZE;
 			return (void *)(h + 1);
 		}
 	}

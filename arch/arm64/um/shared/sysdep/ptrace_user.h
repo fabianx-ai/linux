@@ -16,6 +16,11 @@
 #define REGS_IP_INDEX HOST_PC
 #define REGS_SP_INDEX HOST_SP
 
+/* fpsimd register frame size (32 x uint128 + fpsr + fpcr + reserved);
+ * the os-Linux side compiles against libc headers that don't carry
+ * struct user_fpsimd_struct, so the size is named here for both. */
+#define UM_FPSIMD_SIZE 528
+
 /*
  * glibc may lag the kernel uapi for SYSEMU on arm64 (SYSEMU exists
  * there since Linux 5.3 — fleet finding F27); ensure definitions.

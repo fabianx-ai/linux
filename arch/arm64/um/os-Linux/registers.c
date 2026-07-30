@@ -15,8 +15,8 @@
 #include <registers.h>
 #include <sys/mman.h>
 
-/* v0: fixed fpsimd frame (528 bytes); SVE length discovery comes later */
-unsigned long host_fp_size = sizeof(struct user_fpsimd_struct);
+/* v0: fixed fpsimd frame; SVE length discovery comes later */
+unsigned long host_fp_size = UM_FPSIMD_SIZE;
 
 int get_fp_registers(int pid, unsigned long *regs)
 {
