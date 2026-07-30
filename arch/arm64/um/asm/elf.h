@@ -7,7 +7,7 @@
 #ifndef __UM_ARM64_ELF_H
 #define __UM_ARM64_ELF_H
 
-#include <linux/ptrace.h>
+#include <asm/ptrace.h>
 
 #define R_AARCH64_NONE		0
 #define R_AARCH64_ABS64		257
