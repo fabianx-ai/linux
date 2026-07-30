@@ -165,7 +165,7 @@ static void __init check_sysemu(void)
 					  "doesn't singlestep");
 				goto fail;
 			}
-			n = ptrace(PTRACE_POKEUSER, pid, PT_SYSCALL_RET_OFFSET,
+			n = sysdep_ptrace_pokeuser(pid, PT_SYSCALL_RET_OFFSET,
 				   os_getpid());
 			if (n < 0)
 				fatal_perror("check_sysemu : failed to modify "
@@ -216,10 +216,9 @@ static void __init check_ptrace(void)
 			fatal("check_ptrace : expected (SIGTRAP|0x80), "
 			       "got status = %d", status);
 
-		syscall = ptrace(PTRACE_PEEKUSER, pid, PT_SYSCALL_NR_OFFSET,
-				 0);
+		sysdep_ptrace_peekuser(pid, PT_SYSCALL_NR_OFFSET, &syscall);
 		if (syscall == __NR_getpid) {
-			n = ptrace(PTRACE_POKEUSER, pid, PT_SYSCALL_NR_OFFSET,
+			n = sysdep_ptrace_pokeuser(pid, PT_SYSCALL_NR_OFFSET,
 				   __NR_getppid);
 			if (n < 0)
 				fatal_perror("check_ptrace : failed to modify "

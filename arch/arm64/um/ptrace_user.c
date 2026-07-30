@@ -7,6 +7,7 @@
 #include <sys/ptrace.h>
 #include <sys/uio.h>
 #include <ptrace_user.h>
+#include <sysdep/ptrace.h>
 #include <linux/elf.h>
 
 int ptrace_getregs(long pid, unsigned long *regs_out)
@@ -46,4 +47,32 @@ const char *ptrace_reg_name(int idx)
 	R(SP); R(PC); R(PSTATE);
 	}
 	return "";
+}
+
+long sysdep_ptrace_peekuser(long pid, long off, long *val)
+{
+	unsigned long regs[MAX_REG_NR];
+	int err;
+
+	if (off < 0 || off >= UM_FRAME_SIZE)
+		return -EIO;
+	err = ptrace_getregs(pid, regs);
+	if (err)
+		return err;
+	*val = regs[off / sizeof(long)];
+	return 0;
+}
+
+long sysdep_ptrace_pokeuser(long pid, long off, long val)
+{
+	unsigned long regs[MAX_REG_NR];
+	int err;
+
+	if (off < 0 || off >= UM_FRAME_SIZE)
+		return -EIO;
+	err = ptrace_getregs(pid, regs);
+	if (err)
+		return err;
+	regs[off / sizeof(long)] = val;
+	return ptrace_setregs(pid, regs);
 }
