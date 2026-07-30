@@ -1,0 +1,49 @@
+/*
+ * Copyright (C) 2002 - 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
+ * Licensed under the GPL
+ */
+
+#include <errno.h>
+#include <sys/ptrace.h>
+#include <sys/uio.h>
+#include <ptrace_user.h>
+#include <linux/elf.h>
+
+int ptrace_getregs(long pid, unsigned long *regs_out)
+{
+	struct iovec iov = {
+		.iov_base = regs_out,
+		.iov_len = UM_FRAME_SIZE,
+	};
+
+	if (ptrace(PTRACE_GETREGSET, pid, (void *)NT_PRSTATUS, &iov) < 0)
+		return -errno;
+	return 0;
+}
+
+int ptrace_setregs(long pid, unsigned long *regs)
+{
+	struct iovec iov = {
+		.iov_base = regs,
+		.iov_len = UM_FRAME_SIZE,
+	};
+
+	if (ptrace(PTRACE_SETREGSET, pid, (void *)NT_PRSTATUS, &iov) < 0)
+		return -errno;
+	return 0;
+}
+
+const char *ptrace_reg_name(int idx)
+{
+#define R(n) case HOST_##n: return #n
+
+	switch (idx) {
+	R(X0); R(X1); R(X2); R(X3); R(X4); R(X5); R(X6); R(X7);
+	R(X8); R(X9); R(X10); R(X11); R(X12); R(X13); R(X14);
+	R(X15); R(X16); R(X17); R(X18); R(X19); R(X20); R(X21);
+	R(X22); R(X23); R(X24); R(X25); R(X26); R(X27); R(X28);
+	R(X29); R(X30);
+	R(SP); R(PC); R(PSTATE);
+	}
+	return "";
+}

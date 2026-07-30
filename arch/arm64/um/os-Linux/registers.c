@@ -55,3 +55,13 @@ unsigned long get_thread_reg(int reg, jmp_buf *buf)
 		return 0;
 	}
 }
+
+int arch_init_registers(int pid)
+{
+	/*
+	 * NT_PRFPREG is a fixed-size frame on arm64 (unlike x86 xstate):
+	 * nothing to probe in v0. SVE vector-length discovery comes with
+	 * the SVE surface later.
+	 */
+	return 0;
+}
