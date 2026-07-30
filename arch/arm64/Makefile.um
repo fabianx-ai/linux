@@ -13,3 +13,8 @@ KBUILD_LDFLAGS	+= -EL $(call ld-option, -maarch64elf, -maarch64linux -z norelro)
 ELF_ARCH	:= aarch64
 ELF_FORMAT	:= elf64-littleaarch64
 CHECKFLAGS	+= -D__aarch64__
+
+# arm64's native headers have generated companions (cpucap-defs.h,
+# kernel-hwcap.h, sysreg-defs.h) produced by arch/arm64/tools kapi —
+# run it during archprepare via the core's backend hook.
+ARCHPREPARE_BACKEND := kapigen

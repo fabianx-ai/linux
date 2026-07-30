@@ -13,3 +13,9 @@ targets += user-offsets.s
 
 include/generated/user_constants.h: $(obj)/user-offsets.s FORCE
 	$(call filechk,offsets,__USER_CONSTANT_H__)
+
+# arm64's native generated headers (cpucap-defs.h & friends), invoked
+# from the core archprepare via ARCHPREPARE_BACKEND.
+PHONY += kapigen
+kapigen:
+	$(Q)$(MAKE) $(build)=arch/arm64/tools kapi
