@@ -6,7 +6,13 @@
 # regsets, stub page, signal frame, vdso) and each becomes an object
 # here as it is written (M3b bring-up, per DESIGN.md §6).
 
-obj-y =
+obj-y = subarch.o alternatives.o
+
+# Native arm64 string library objects (string.h sets all __HAVE_ARCH_*):
+# these run natively on the arm64 host, exactly like the x86 reuse.
+subarch-y = ../lib/memcpy.o ../lib/memset.o ../lib/strlen.o ../lib/strcmp.o \
+	../lib/strchr.o ../lib/strncmp.o ../lib/strrchr.o \
+	../lib/memchr.o ../lib/memcmp.o
 
 $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
 targets += user-offsets.s
