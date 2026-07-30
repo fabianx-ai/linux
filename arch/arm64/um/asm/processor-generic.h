@@ -23,7 +23,10 @@ struct arch_thread {
 
 #define INIT_ARCH_THREAD { .faultinfo = INIT_FAULTINFO }
 
-struct thread_struct {
+static inline void arch_copy_thread(struct arch_thread *from,
+				    struct arch_thread *to)
+{
+}struct thread_struct {
 	struct pt_regs *segv_regs;
 	struct task_struct *prev_sched;
 	struct arch_thread arch;
