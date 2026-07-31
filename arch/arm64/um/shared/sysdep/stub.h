@@ -154,7 +154,7 @@ static __always_inline void *get_stub_data(void)
 	asm volatile (
 		"adrp %0, 0 ;"
 		"add %0, %0, %1 ;"
-		: "=r" (ret)
+		: "=&r" (ret)
 		: "r" (UM_KERN_PAGE_SIZE));
 
 	return (void *)ret;
