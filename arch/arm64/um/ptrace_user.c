@@ -8,6 +8,7 @@
 #include <sys/uio.h>
 #include <ptrace_user.h>
 #include <sysdep/ptrace.h>
+#include <sysdep/ptrace_user.h>
 #include <linux/elf.h>
 
 int ptrace_getregs(long pid, unsigned long *regs_out)
@@ -54,6 +55,19 @@ long sysdep_ptrace_peekuser(long pid, long off, long *val)
 	unsigned long regs[MAX_REG_NR];
 	int err;
 
+	if (off == PT_SYSCALL_NR_OFFSET) {
+		/* syscallno is its own regset on arm64 (x8 writes are not
+		 * reloaded — verified empirically on 6.8) */
+		int nr;
+		struct iovec iov = { .iov_base = &nr, .iov_len = sizeof(nr) };
+
+		if (ptrace(PTRACE_GETREGSET, pid, (void *)NT_ARM_SYSTEM_CALL,
+			   &iov) < 0)
+			return -errno;
+		*val = nr;
+		return 0;
+	}
+
 	if (off < 0 || off >= UM_FRAME_SIZE)
 		return -EIO;
 	err = ptrace_getregs(pid, regs);
@@ -67,6 +81,16 @@ long sysdep_ptrace_pokeuser(long pid, long off, long val)
 {
 	unsigned long regs[MAX_REG_NR];
 	int err;
+
+	if (off == PT_SYSCALL_NR_OFFSET) {
+		int nr = val;
+		struct iovec iov = { .iov_base = &nr, .iov_len = sizeof(nr) };
+
+		if (ptrace(PTRACE_SETREGSET, pid, (void *)NT_ARM_SYSTEM_CALL,
+			   &iov) < 0)
+			return -errno;
+		return 0;
+	}
 
 	if (off < 0 || off >= UM_FRAME_SIZE)
 		return -EIO;
