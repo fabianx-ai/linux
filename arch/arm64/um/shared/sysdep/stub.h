@@ -163,7 +163,7 @@ static __always_inline void *get_stub_data(void)
 #define stub_start(fn)							\
 	asm volatile (							\
 		"sub sp, sp, %0 ;"					\
-		"mov x9, %1 ;"						\
+		"adr x9, %1 ;"						\
 		"blr x9 ;"						\
 		:: "i" (STUB_SIZE),					\
 		   "i" (&fn) : "x9")
