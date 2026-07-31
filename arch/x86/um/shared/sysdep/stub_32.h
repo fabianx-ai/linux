@@ -13,6 +13,7 @@
 #define STUB_MMAP_NR __NR_mmap2
 
 /* TLS restore syscall the stub filter must allow (backend-provided) */
+#define UM_SA_RESTORER 0x04000000 /* SA_RESTORER (x86 uapi) */
 #define STUB_TLS_SYSCALL_NR __NR_set_thread_area
 #define MMAP_OFFSET(o) ((o) >> UM_KERN_PAGE_SHIFT)
 

@@ -26,6 +26,7 @@
  * EL0-writable and the stub restores it via msr directly. This value
  * (the compat set_tls number) only keeps the filter table's shape.
  */
+#define UM_SA_RESTORER 0 /* arm64 has no SA_RESTORER; the kernel provides the sigreturn trampoline */
 #define STUB_TLS_SYSCALL_NR (0x0f0000 + 5)
 #define MMAP_OFFSET(o) (o)
 
