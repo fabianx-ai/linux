@@ -91,10 +91,15 @@ void wait_stub_done(int pid)
 		return;
 
 bad_wait:
+	siginfo_t si;
 	err = ptrace_dump_regs(pid);
 	if (err)
 		printk(UM_KERN_ERR "Failed to get registers from stub, errno = %d\n",
 		       -err);
+	/* TEMP DEBUG (M3b bring-up, remove me): dump the stub's siginfo */
+	if (ptrace(PTRACE_GETSIGINFO, pid, 0, &si) == 0)
+		printk(UM_KERN_ERR "%s : stub siginfo signo=%d code=%d addr=%p\n",
+		       __func__, si.si_signo, si.si_code, si.si_addr);
 	printk(UM_KERN_ERR "%s : failed to wait for SIGTRAP, pid = %d, n = %d, errno = %d, status = 0x%x\n",
 	       __func__, pid, n, errno, status);
 	fatal_sigsegv();
