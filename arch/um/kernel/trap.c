@@ -178,8 +178,9 @@ retry:
 		vm_fault_t fault;
 
 		fault = handle_mm_fault(vma, address, flags, NULL);
-		/* TEMP DEBUG (M3b bring-up, remove me): fault result + walk */
-		printk("UMLDBG-HMF: addr=%lx fault=%x\n", address, fault);
+		/* TEMP DEBUG (M3b bring-up, remove me): fault result + vma */
+		printk("UMLDBG-HMF: addr=%lx fault=%x vma=%lx-%lx fl=%lx\n",
+		       address, fault, vma->vm_start, vma->vm_end, vma->vm_flags);
 
 		if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
 			goto out_nosemaphore;
