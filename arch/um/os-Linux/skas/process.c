@@ -604,6 +604,13 @@ void userspace(struct uml_pt_regs *regs)
 
 				GET_FAULTINFO_FROM_MC(regs->faultinfo, mcontext);
 			}
+
+			/* TEMP DEBUG (M3b bring-up, remove me): trace the seccomp dance */
+			printk("UMLDBG: sig=%d nr=%ld addr=%lx pc=%lx sp=%lx ps=%lx\n",
+			       sig, (long)PT_SYSCALL_NR(regs->gp),
+			       (unsigned long)FAULT_ADDRESS(regs->faultinfo),
+			       regs->gp[HOST_PC], regs->gp[HOST_SP],
+			       regs->gp[HOST_PSTATE]);
 		} else {
 			int pid = mm_id->pid;
 
