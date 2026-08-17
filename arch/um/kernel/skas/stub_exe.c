@@ -40,6 +40,24 @@ noinline static void real_init(void)
 	/* Needed in SECCOMP mode (and safe to do anyway) */
 	stub_syscall5(__NR_prctl, PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
 
+#ifdef __aarch64__
+#ifndef PR_PAC_SET_ENABLED_KEYS
+#define PR_PAC_SET_ENABLED_KEYS 60
+#endif
+	/*
+	 * Disable all user PAC keys for this stub. Guest code executes on
+	 * this host process, whose PAC keys are randomized by the host at
+	 * the stub's execveat. A forked guest child would otherwise
+	 * authenticate parent-signed pointers (the inherited stack is full
+	 * of them) against its own fresh keys and die by an FPAC SIGILL
+	 * (autiasp, ILL_ILLOPN). With all keys disabled, PAC instructions
+	 * execute as NOPs and the guest sees a plain non-PAC CPU — the
+	 * faithful v0 behaviour. Best effort: on hosts without PAC this
+	 * simply fails and there is nothing to protect against anyway.
+	 */
+	stub_syscall5(__NR_prctl, PR_PAC_SET_ENABLED_KEYS, 0, 0, 0, 0);
+#endif
+
 	/* read information from STDIN and close it */
 	res = stub_syscall3(__NR_read, 0,
 			    (unsigned long)&init_data, sizeof(init_data));
