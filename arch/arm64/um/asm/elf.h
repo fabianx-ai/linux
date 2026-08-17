@@ -88,7 +88,18 @@ struct task_struct;
 #define ELF_ET_DYN_BASE (TASK_SIZE / 3 * 2)
 
 extern long elf_aux_hwcap;
-#define ELF_HWCAP (elf_aux_hwcap)
+/*
+ * elf_aux_hwcap mirrors the host's AT_HWCAP verbatim (shared
+ * arch/um/os-Linux/elf_aux.c).  A PAC-capable host (e.g. the M2,
+ * 0xefb3ffff) therefore tells guest userland that pointer
+ * authentication is available, contradicting the F44 stance that the
+ * guest sees a non-PAC CPU (PAC keys do not survive a guest fork;
+ * stray cross-process PAC instructions are emulated on the SIGILL
+ * path).  Drop PACA/PACG so no PAC path the emulation does not cover
+ * is ever selected.  Bit numbers are uapi HWCAP_PACA/HWCAP_PACG; the
+ * uapi header is deliberately not included here.
+ */
+#define ELF_HWCAP (elf_aux_hwcap & ~((1UL << 30) | (1UL << 31)))
 
 extern char *elf_aux_platform;
 #define ELF_PLATFORM (elf_aux_platform ?: ELF_PLATFORM_FALLBACK)
