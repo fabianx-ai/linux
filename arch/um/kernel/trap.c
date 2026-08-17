@@ -177,6 +177,23 @@ retry:
 	do {
 		vm_fault_t fault;
 
+#ifdef CONFIG_UML_ARM64
+		/* TEMP DEBUG (M3b bring-up, remove me): pre-fault chain snapshot.
+		 * Reads only pgd/pud slots; folded p4d keeps the reads inside
+		 * pages we know are mapped (fresh mm: *pgd=0 -> pud slot reads
+		 * physmem page 0, garbage but harmless).
+		 */
+		if (is_user) {
+			pgd_t *__pgd = pgd_offset(mm, address);
+			p4d_t *__p4d = p4d_offset(__pgd, address);
+			pud_t *__pud = pud_offset(__p4d, address);
+
+			printk("UMLDBG-PRE: pid=%d addr=%lx *pgd=%llx *pud=%llx\n",
+			       current->pid, address,
+			       (unsigned long long)pgd_val(*__pgd),
+			       (unsigned long long)pud_val(*__pud));
+		}
+#endif
 		fault = handle_mm_fault(vma, address, flags, NULL);
 		/* TEMP DEBUG (M3b bring-up, remove me): fault result + vma */
 		printk("UMLDBG-HMF: addr=%lx fault=%x vma=%lx-%lx fl=%lx\n",
