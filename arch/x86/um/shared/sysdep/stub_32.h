@@ -149,7 +149,7 @@ stub_seccomp_restore_state(struct stub_data_arch *arch)
 }
 
 /* See stub_64.h — x86 returns via the SA_RESTORER trampoline. */
-static __always_inline void stub_signal_return(void)
+static __always_inline void stub_signal_return(void *frame)
 {
 }
 

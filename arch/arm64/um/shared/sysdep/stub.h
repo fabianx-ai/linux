@@ -188,20 +188,21 @@ extern void stub_signal_restorer(void);
  * arm64 has no SA_RESTORER: the host sets x30 to the VDSO's
  * __kernel_rt_sigreturn, and that svc does not execute from the stub
  * page — the seccomp filter TRAPs it, re-entering the handler until
- * the ~4.7KB frames overflow the stub sigstack. Redirect the return:
- * overwrite the saved x30 in the handler's frame ([x29,#8]) with the
- * in-stub restorer, then return normally; the epilogue's ret enters
- * stub_signal_restorer with SP back at the signal frame, as
- * rt_sigreturn expects. (A plain C tail call is NOT reliable — GCC
- * emitted bl, which left SP mid-frame and made rt_sigreturn read a
- * zero frame.) Build-audited: prologue/epilogue must keep the saved
- * x30 at [x29,#8].
+ * the ~4.7KB frames overflow the stub sigstack. Enter the in-stub
+ * restorer directly instead. ABI: the host enters the handler with
+ * SP pointing at the rt_sigframe, whose first member is the siginfo,
+ * so the handler's info argument is the frame address — restore SP
+ * from it and branch. (Neither a C tail call (GCC emits bl, leaving
+ * SP mid-frame) nor patching the saved LR (no frame pointer here)
+ * works; this is layout-independent.)
  */
-static __always_inline void stub_signal_return(void)
+static __always_inline void stub_signal_return(void *frame)
 {
-	asm volatile("adr x9, stub_signal_restorer\n"
-		     "str x9, [x29, #8]"
-		     ::: "x9", "memory");
+	asm volatile("mov sp, %0\n"
+		     "adr x9, stub_signal_restorer\n"
+		     "br x9"
+		     :: "r"(frame) : "x9", "memory");
+	__builtin_unreachable();
 }
 
 #endif
