@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * mcontext marshal for the arm64 UML backend: uml_pt_regs <-> host
- * ucontext_t (regs[31]/sp/pc/pstate), ESR extraction from the
- * sigcontext extra-record chain, fpsimd record handling, and the
- * TPIDR_EL0 sync channel for the stub.
+ * ucontext_t (regs[31]/sp/pc/pstate), fpsimd record handling, and the
+ * TPIDR_EL0 sync channel for the stub. The ESR extra-record walk lives
+ * in sysdep/mcontext.h — GET_FAULTINFO_FROM_MC runs in the stub page
+ * and must stay call-closed.
  */
 #include <linux/errno.h>
 #include <linux/string.h>
@@ -51,22 +52,6 @@ void get_mc_from_regs(struct uml_pt_regs *regs, mcontext_t *mc,
 		mc->pstate |= (1UL << 21);
 	else
 		mc->pstate &= ~(1UL << 21);
-}
-
-void get_faultinfo_from_mc(struct faultinfo *fi, mcontext_t *mc)
-{
-	struct { __u32 magic; __u32 size; } *h;
-	unsigned long long esr = 0;
-
-	fi->addr = mc->fault_address;
-	for (h = (void *)mc->__reserved; h->magic; h = (void *)h + h->size) {
-		if (h->magic == ESR_MAGIC) {
-			esr = *(__u64 *)(h + 1);
-			break;
-		}
-	}
-	fi->error_code = esr;
-	fi->trap_no = (esr >> 26) & 0x3f;
 }
 
 /* Locate the fpsimd record inside the sigframe's sigcontext */
