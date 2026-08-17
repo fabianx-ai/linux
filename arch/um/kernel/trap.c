@@ -214,11 +214,14 @@ retry:
 			pud_t *pud = pud_offset(p4d, address);
 			unsigned long *pp = (unsigned long *)((unsigned long)pmd & PAGE_MASK);
 
-			printk("UMLDBG-WALK: addr=%lx *pgd=%llx *pud=%llx *pmd=%llx pte=%px pmdpg=%llx %llx %llx %llx\n",
-			       address, (unsigned long long)pgd_val(*pgd),
+			printk("UMLDBG-WALK: pid=%d mm=%px pgd=%px addr=%lx *pgd=%llx *pud=%llx *pmd=%llx pte=%px pmdpg=%llx %llx %llx %llx pgdpg=%llx %llx\n",
+			       current->pid, mm, mm->pgd, address,
+			       (unsigned long long)pgd_val(*pgd),
 			       (unsigned long long)pud_val(*pud),
 			       (unsigned long long)pmd_val(*pmd), pte,
-			       pp[0], pp[1], pp[2], pp[3]);
+			       pp[0], pp[1], pp[2], pp[3],
+			       (unsigned long long)pgd_val(mm->pgd[0]),
+			       (unsigned long long)pgd_val(mm->pgd[1]));
 		}
 	} while (!pte_present(*pte));
 	err = 0;
