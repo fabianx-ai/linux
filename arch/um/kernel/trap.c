@@ -205,6 +205,10 @@ retry:
 
 		pmd = pmd_off(mm, address);
 		pte = pte_offset_kernel(pmd, address);
+		/* TEMP DEBUG (M3b bring-up, remove me): dump the fault walk */
+		printk("UMLDBG-WALK: addr=%lx pmd=%px *pmd=%llx pte=%px uphys=%lx svm=%lx evm=%lx\n",
+		       address, pmd, (unsigned long long)pmd_val(*pmd), pte,
+		       (unsigned long)uml_physmem, start_vm, end_vm);
 	} while (!pte_present(*pte));
 	err = 0;
 	/*
