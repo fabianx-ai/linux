@@ -165,4 +165,10 @@ static __always_inline void stub_signal_return(void *frame)
 {
 }
 
+/* x86 forbids direct fs/gs base writes (arch_prctl only), so the
+ * kernel already knows the TLS base — nothing for the stub to save. */
+static __always_inline void stub_seccomp_save_state(struct stub_data_arch *arch)
+{
+}
+
 #endif

@@ -153,4 +153,9 @@ static __always_inline void stub_signal_return(void *frame)
 {
 }
 
+/* See stub_64.h — x86 learns TLS via arch_prctl; nothing to save. */
+static __always_inline void stub_seccomp_save_state(struct stub_data_arch *arch)
+{
+}
+
 #endif
