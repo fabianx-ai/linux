@@ -432,6 +432,22 @@ static int hostfs_read_folio(struct file *file, struct folio *folio)
 	loff_t start = folio_pos(folio);
 	int bytes_read, ret = 0;
 
+#ifdef CONFIG_UML_ARM64
+	/* TEMP DEBUG (M3b bring-up, remove me): flag reads where the cached
+	 * host fd does not belong to the file's inode (the F44 poison hunt).
+	 */
+	{
+		struct hostfs_stat __st;
+		struct inode *__ino = file_inode(file);
+
+		if (!stat_file(NULL, &__st, FILE_HOSTFS_I(file)->fd) &&
+		    __st.ino != __ino->i_ino)
+			printk("UMLDBG-HFR: MISMATCH ino=%lu fd_ino=%llu idx=%lu pos=%llx\n",
+			       __ino->i_ino, __st.ino, folio->index,
+			       (unsigned long long)start);
+	}
+#endif
+
 	buffer = kmap_local_folio(folio, 0);
 	bytes_read = read_file(FILE_HOSTFS_I(file)->fd, &start, buffer,
 			PAGE_SIZE);
