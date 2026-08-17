@@ -19,8 +19,14 @@ struct faultinfo {
 #define FAULT_WRITE(fi) ((fi).error_code & (1 << 6))
 #define FAULT_ADDRESS(fi) ((fi).addr)
 
-/* Data abort (page fault): EC 0x24 (lower EL) or 0x25 (current EL) */
-#define SEGV_IS_FIXABLE(fi) (((fi)->trap_no & 0x3e) == 0x24)
+/*
+ * This is Page Fault — the arm64 trap-14: instruction abort (EC 0x20
+ * lower EL / 0x21 current EL) or data abort (EC 0x24 / 0x25). Fetch
+ * faults are demand paging too; without them init dies on its first
+ * text page.
+ */
+#define SEGV_IS_FIXABLE(fi) ((((fi)->trap_no & 0x3e) == 0x20) || \
+			     (((fi)->trap_no & 0x3e) == 0x24))
 
 #define PTRACE_FULL_FAULTINFO 1
 
