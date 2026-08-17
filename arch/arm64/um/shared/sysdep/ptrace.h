@@ -23,6 +23,13 @@
  * x8 is a compiler-used register (x86's ORIG_RAX is dead storage). */
 #define HOST_SYSCALLNO 35
 
+/* Third UML-internal slot: the trap-time x0, mirrored by the regset
+ * marshal / get_stub_state. handle_syscall writes the default return
+ * (-ENOSYS) into x0 BEFORE reading args — harmless on x86 (rax is not
+ * an argument register) but on arm64 x0 is both return and arg1, so
+ * UPT_SYSCALL_ARG1 reads this snapshot instead. */
+#define HOST_ARG0 36
+
 #define REGS_Xn(r, n) ((r)[HOST_X0 + (n)])
 #define REGS_PC(r) ((r)[HOST_PC])
 #define REGS_SP(r) ((r)[HOST_SP])
@@ -32,7 +39,7 @@
 #define UPT_SP(r) REGS_SP((r)->gp)
 #define UPT_PSTATE(r) REGS_PSTATE((r)->gp)
 
-#define UPT_SYSCALL_ARG1(r) ((r)->gp[HOST_X0])
+#define UPT_SYSCALL_ARG1(r) ((r)->gp[HOST_ARG0])
 #define UPT_SYSCALL_ARG2(r) ((r)->gp[HOST_X1])
 #define UPT_SYSCALL_ARG3(r) ((r)->gp[HOST_X2])
 #define UPT_SYSCALL_ARG4(r) ((r)->gp[HOST_X3])
@@ -42,7 +49,7 @@
 extern unsigned long host_fp_size;
 
 struct uml_pt_regs {
-	unsigned long gp[MAX_REG_NR + 2]; /* +2: HOST_TLS, HOST_SYSCALLNO */
+	unsigned long gp[MAX_REG_NR + 3]; /* +3: HOST_TLS, HOST_SYSCALLNO, HOST_ARG0 */
 	struct faultinfo faultinfo;
 	long syscall;
 	int is_user;

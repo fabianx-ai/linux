@@ -16,8 +16,8 @@
 /* This is set once at boot time and not changed thereafter */
 
 /* Backend regset marshals may fill internal slots past the ABI frame
- * (arm64: HOST_TLS, HOST_SYSCALLNO) — size for them. */
-unsigned long exec_regs[MAX_REG_NR + 2];
+ * (arm64: HOST_TLS, HOST_SYSCALLNO, HOST_ARG0) — size for them. */
+unsigned long exec_regs[MAX_REG_NR + 3];
 unsigned long *exec_fp_regs;
 
 int init_pid_registers(int pid)
