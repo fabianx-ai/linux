@@ -561,8 +561,8 @@ void userspace(struct uml_pt_regs *regs)
 			}
 #ifdef CONFIG_UML_ARM64
 			/* TEMP DEBUG (M3b bring-up, remove me): resume state */
-			printk("UMLDBG-RESUME: pid=%d pc=%lx sp=%lx x0=%lx tls=%lx\n",
-			       current->pid, regs->gp[HOST_PC], regs->gp[HOST_SP],
+			printk("UMLDBG-RESUME: stubpid=%d pc=%lx sp=%lx x0=%lx tls=%lx\n",
+			       mm_id->pid, regs->gp[HOST_PC], regs->gp[HOST_SP],
 			       regs->gp[HOST_X0], regs->gp[HOST_TLS]);
 #endif
 
