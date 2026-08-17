@@ -184,4 +184,20 @@ extern void stub_syscall_handler(void);
 extern void stub_signal_interrupt(int, siginfo_t *, void *);
 extern void stub_signal_restorer(void);
 
+/*
+ * arm64 has no SA_RESTORER: the host would return from the signal
+ * handler through the VDSO's __kernel_rt_sigreturn, and that svc does
+ * not execute from the stub page — the seccomp filter TRAPs it, the
+ * trap re-enters the handler, and the nested ~4.7KB frames blow the
+ * stub sigstack within two rounds. Tail-call the stub restorer
+ * instead: a sibling call keeps SP at the signal frame, as
+ * rt_sigreturn expects. Build-audited: the handler must end in
+ * "b stub_signal_restorer", never bl/ret.
+ */
+static __always_inline void stub_signal_return(void)
+{
+	stub_signal_restorer();
+	__builtin_unreachable();
+}
+
 #endif
