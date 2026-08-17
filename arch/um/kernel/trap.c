@@ -441,6 +441,33 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 		panic("Kernel mode signal %d", sig);
 	}
 
+#ifdef CONFIG_UML_ARM64
+	/* TEMP DEBUG (M3b bring-up, remove me): fetch the real insn word
+	 * behind a SIGILL and the host's si_code.
+	 */
+	if (sig == SIGILL) {
+		struct mm_struct *__mm = current->mm;
+		unsigned long __pc = UPT_IP(regs);
+		pgd_t *__pgd = pgd_offset(__mm, __pc);
+		p4d_t *__p4d = p4d_offset(__pgd, __pc);
+		pud_t *__pud = pud_offset(__p4d, __pc);
+		unsigned int __insn = 0;
+
+		if (pud_val(*__pud)) {
+			pmd_t *__pmd = pmd_offset(__pud, __pc);
+
+			if (pmd_val(*__pmd)) {
+				pte_t *__pte = pte_offset_kernel(__pmd, __pc);
+
+				if (pte_present(*__pte))
+					__insn = *(unsigned int *)((unsigned long)uml_physmem + (pte_val(*__pte) & PAGE_MASK) + (__pc & (PAGE_SIZE - 1)));
+			}
+		}
+		printk("UMLDBG-ILL: pc=%lx insn=%08x sic=%d siaddr=%lx\n",
+		       __pc, __insn, si->si_code, (unsigned long)si->si_addr);
+	}
+#endif
+
 	arch_examine_signal(sig, regs);
 
 	/* Is the signal layout for the signal known?
