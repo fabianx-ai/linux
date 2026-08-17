@@ -452,7 +452,7 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 		p4d_t *__p4d = p4d_offset(__pgd, __pc);
 		pud_t *__pud = pud_offset(__p4d, __pc);
 		unsigned int __insn = 0;
-		unsigned long __pg = 0;
+		unsigned long __pg = 0, __pte_phys = 0;
 
 		if (pud_val(*__pud)) {
 			pmd_t *__pmd = pmd_offset(__pud, __pc);
@@ -461,18 +461,40 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 				pte_t *__pte = pte_offset_kernel(__pmd, __pc);
 
 				if (pte_present(*__pte)) {
-					__pg = (unsigned long)uml_physmem +
-						(pte_val(*__pte) & PAGE_MASK);
+					__pte_phys = pte_val(*__pte) & PAGE_MASK;
+					__pg = (unsigned long)uml_physmem + __pte_phys;
 					__insn = *(unsigned int *)(__pg + (__pc & (PAGE_SIZE - 1)));
 				}
 			}
 		}
 		printk("UMLDBG-ILL: pc=%lx insn=%08x sic=%d siaddr=%lx\n",
 		       __pc, __insn, si->si_code, (unsigned long)si->si_addr);
-		if (__pg)
+		if (__pg) {
+			struct vm_area_struct *__vma;
+
 			printk("UMLDBG-ILL: pgstart=%08x %08x %08x %08x\n",
 			       ((unsigned int *)__pg)[0], ((unsigned int *)__pg)[1],
 			       ((unsigned int *)__pg)[2], ((unsigned int *)__pg)[3]);
+
+			/* pte frame vs page-cache folio frame for this file page */
+			mmap_read_lock(__mm);
+			__vma = find_vma(__mm, __pc);
+			if (__vma && __vma->vm_start <= __pc && __vma->vm_file) {
+				unsigned long __idx = ((__pc - __vma->vm_start) >>
+						       PAGE_SHIFT) + __vma->vm_pgoff;
+				struct folio *__f = xa_load(&__vma->vm_file->f_mapping->i_pages,
+							    __idx);
+
+				printk("UMLDBG-ILL: ino=%lu idx=%lx pte_phys=%lx folio=%px folio_phys=%lx uptodate=%d\n",
+				       file_inode(__vma->vm_file)->i_ino, __idx,
+				       __pte_phys, __f,
+				       __f ? page_to_pfn(folio_page(__f, 0)) << PAGE_SHIFT : 0,
+				       __f ? folio_test_uptodate(__f) : -1);
+			} else {
+				printk("UMLDBG-ILL: no file vma for pc\n");
+			}
+			mmap_read_unlock(__mm);
+		}
 	}
 #endif
 
