@@ -85,6 +85,9 @@ int get_stub_state(struct uml_pt_regs *regs, struct stub_data *data,
 
 	get_regs_from_mc(regs, mcontext);
 
+	/* trap-time x0 snapshot for UPT_SYSCALL_ARG1 (see HOST_ARG0) */
+	regs->gp[HOST_ARG0] = mcontext->regs[0];
+
 	fpstate_stub = get_fpstate(data, mcontext, &fp_size);
 	if (!fpstate_stub)
 		return -EINVAL;
