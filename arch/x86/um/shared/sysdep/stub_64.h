@@ -161,7 +161,7 @@ stub_seccomp_restore_state(struct stub_data_arch *arch)
  * rt_sigreturn svc is on the stub page and passes the seccomp
  * filter's IP check. Nothing to do here.
  */
-static __always_inline void stub_signal_return(void)
+static __always_inline void stub_signal_return(void *frame)
 {
 }
 

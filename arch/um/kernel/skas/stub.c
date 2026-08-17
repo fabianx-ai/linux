@@ -171,7 +171,7 @@ restart_wait:
 	stub_seccomp_restore_state(&d->arch_data);
 
 	/* Return so that the host modified mcontext is restored. */
-	stub_signal_return();
+	stub_signal_return(info);
 }
 
 void __section(".__syscall_stub")
