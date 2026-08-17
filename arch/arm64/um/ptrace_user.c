@@ -20,6 +20,9 @@ int ptrace_getregs(long pid, unsigned long *regs_out)
 
 	if (ptrace(PTRACE_GETREGSET, pid, (void *)NT_PRSTATUS, &iov) < 0)
 		return -errno;
+
+	/* Mirror the syscall number into the dead HOST_SYSCALLNO slot */
+	regs_out[HOST_SYSCALLNO] = regs_out[HOST_X8];
 	return 0;
 }
 
@@ -52,7 +55,7 @@ const char *ptrace_reg_name(int idx)
 
 long sysdep_ptrace_peekuser(long pid, long off, long *val)
 {
-	unsigned long regs[MAX_REG_NR];
+	unsigned long regs[MAX_REG_NR + 2]; /* incl. backend-internal slots */
 	int err;
 
 	if (off == PT_SYSCALL_NR_OFFSET) {
@@ -79,7 +82,7 @@ long sysdep_ptrace_peekuser(long pid, long off, long *val)
 
 long sysdep_ptrace_pokeuser(long pid, long off, long val)
 {
-	unsigned long regs[MAX_REG_NR];
+	unsigned long regs[MAX_REG_NR + 2]; /* incl. backend-internal slots */
 	int err;
 
 	if (off == PT_SYSCALL_NR_OFFSET) {

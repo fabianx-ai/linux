@@ -17,6 +17,12 @@
  * guest's TPIDR_EL0 value. */
 #define HOST_TLS 34
 
+/* Second UML-internal slot: the syscall number, mirrored from x8 by the
+ * regset marshal. PT_SYSCALL_NR must not alias a live GPR — process.c's
+ * -ERESTARTSYS guard writes -1 into it after every relayed signal, and
+ * x8 is a compiler-used register (x86's ORIG_RAX is dead storage). */
+#define HOST_SYSCALLNO 35
+
 #define REGS_Xn(r, n) ((r)[HOST_X0 + (n)])
 #define REGS_PC(r) ((r)[HOST_PC])
 #define REGS_SP(r) ((r)[HOST_SP])
@@ -36,7 +42,7 @@
 extern unsigned long host_fp_size;
 
 struct uml_pt_regs {
-	unsigned long gp[MAX_REG_NR + 1]; /* +1: HOST_TLS (internal) */
+	unsigned long gp[MAX_REG_NR + 2]; /* +2: HOST_TLS, HOST_SYSCALLNO */
 	struct faultinfo faultinfo;
 	long syscall;
 	int is_user;

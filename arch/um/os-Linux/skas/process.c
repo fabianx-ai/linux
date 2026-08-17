@@ -41,7 +41,7 @@ int is_skas_winch(int pid, int fd, void *data)
 
 static int ptrace_dump_regs(int pid)
 {
-	unsigned long regs[MAX_REG_NR];
+	unsigned long regs[MAX_REG_NR + 2]; /* backend-internal slots (arm64) */
 	int i, err;
 
 	err = ptrace_getregs(pid, regs);
