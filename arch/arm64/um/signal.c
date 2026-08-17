@@ -1,16 +1,172 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Signal frame construction for the arm64 UML backend — STUB for
- * bring-up: delivery fails with -ENOSYS until the rt_sigframe
- * implementation lands (the next surface; sys_rt_sigreturn is already
- * ni-stubbed in the table with the same note).
+ * Signal frame construction and restoration for the arm64 UML backend:
+ * the native arm64 rt_sigframe (siginfo + ucontext with the 4384-byte
+ * mcontext including the fpsimd extra record) on the guest's stack.
+ * arm64 has no SA_RESTORER: the handler's return address (x30) is set
+ * to the guest vDSO's __kernel_rt_sigreturn trampoline.
  */
-#include <linux/errno.h>
+#include <linux/ptrace.h>
+#include <linux/kernel.h>
+#include <linux/syscalls.h>
 #include <linux/signal.h>
+#include <linux/uaccess.h>
+#include <linux/slab.h>
+#include <asm/unistd.h>
+#include <frame_kern.h>
+#include <registers.h>
+#include <skas.h>
 #include <sysdep/ptrace.h>
+#include <sysdep/ptrace_user.h>
+
+extern unsigned long um_vdso_sigreturn;
+
+#define FPSIMD_MAGIC	0x46508001
+
+/* arm64 sigcontext — the mcontext part of the ABI ucontext */
+struct um_sigcontext {
+	__u64 fault_address;
+	__u64 regs[31];
+	__u64 sp;
+	__u64 pc;
+	__u64 pstate;
+	__u8 __reserved[4096] __aligned(16);
+};
+
+/* ABI layout: siginfo + ucontext{flags, link, stack, sigmask(1024b), mcontext} */
+struct um_rt_sigframe {
+	siginfo_t info;
+	unsigned long uc_flags;
+	void *uc_link;
+	stack_t uc_stack;
+	sigset_t uc_sigmask;
+	__u8 __unused[1024 / 8 - sizeof(sigset_t)];
+	struct um_sigcontext sc;
+};
+
+static void build_sc(struct um_sigcontext *sc, struct pt_regs *regs)
+{
+	struct uml_pt_regs *ur = &regs->regs;
+	struct {
+		__u32 magic;
+		__u32 size;
+	} *hdr = (void *)sc->__reserved;
+	int i;
+
+	sc->fault_address = 0;
+	for (i = 0; i < 31; i++)
+		sc->regs[i] = ur->gp[i];
+	sc->sp = ur->gp[HOST_SP];
+	sc->pc = ur->gp[HOST_PC];
+	sc->pstate = ur->gp[HOST_PSTATE];
+
+	/* the fpsimd extra record, then the terminator */
+	hdr->magic = FPSIMD_MAGIC;
+	hdr->size = sizeof(*hdr) + UM_FPSIMD_SIZE;
+	memcpy(hdr + 1, ur->fp, UM_FPSIMD_SIZE);
+	hdr = (void *)(hdr + 1) + UM_FPSIMD_SIZE;
+	hdr->magic = 0;
+	hdr->size = 0;
+}
 
 int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 			  struct pt_regs *regs, sigset_t *mask)
 {
-	return -ENOSYS;
+	struct um_rt_sigframe __user *frame;
+	struct um_rt_sigframe *kf;
+	struct uml_pt_regs *ur = &regs->regs;
+	int err, sig = ksig->sig;
+
+	stack_top = round_down(stack_top, 16);
+	frame = (struct um_rt_sigframe __user *)stack_top - 1;
+	if (!access_ok(frame, sizeof(*frame)))
+		return 1;
+
+	kf = kzalloc(sizeof(*kf), GFP_KERNEL);
+	if (!kf)
+		return 1;
+
+	/* uc_flags/uc_link stay zero; the ABI mask area is 1024 bits */
+	memcpy(&kf->uc_sigmask, mask, sizeof(*mask));
+	build_sc(&kf->sc, regs);
+
+	err = copy_to_user(frame, kf, sizeof(*kf));
+	kfree(kf);
+	if (err)
+		return 1;
+
+	if (ksig->ka.sa.sa_flags & SA_SIGINFO) {
+		if (copy_siginfo_to_user(&frame->info, &ksig->info))
+			return 1;
+	}
+	if (__save_altstack(&frame->uc_stack, PT_REGS_SP(regs)))
+		return 1;
+
+	PT_REGS_SP(regs) = (unsigned long)frame;
+	PT_REGS_IP(regs) = (unsigned long)ksig->ka.sa.sa_handler;
+	ur->gp[HOST_X0] = sig;
+	ur->gp[HOST_X1] = (unsigned long)&frame->info;
+	ur->gp[HOST_X2] = (unsigned long)&frame->uc_flags;
+	/* arm64 has no SA_RESTORER: x30 points at the guest vDSO */
+	ur->gp[HOST_X30] = um_vdso_sigreturn;
+	return 0;
+}
+
+static int restore_sc(struct pt_regs *regs, struct um_sigcontext __user *from)
+{
+	struct uml_pt_regs *ur = &regs->regs;
+	struct {
+		__u64 fault_address;
+		__u64 regs[31];
+		__u64 sp, pc, pstate;
+	} fixed;
+	struct {
+		__u32 magic;
+		__u32 size;
+	} hdr;
+	int i;
+
+	if (copy_from_user(&fixed, from, sizeof(fixed)))
+		return 1;
+
+	for (i = 0; i < 31; i++)
+		ur->gp[i] = fixed.regs[i];
+	ur->gp[HOST_SP] = fixed.sp;
+	ur->gp[HOST_PC] = fixed.pc;
+	ur->gp[HOST_PSTATE] = fixed.pstate;
+
+	if (copy_from_user(&hdr, (void __user *)from +
+			 offsetof(struct um_sigcontext, __reserved), sizeof(hdr)))
+		return 1;
+	if (hdr.magic == FPSIMD_MAGIC &&
+	    hdr.size >= sizeof(hdr) + UM_FPSIMD_SIZE &&
+	    copy_from_user(ur->fp, (void __user *)from +
+			   offsetof(struct um_sigcontext, __reserved) +
+			   sizeof(hdr), UM_FPSIMD_SIZE))
+		return 1;
+
+	return 0;
+}
+
+SYSCALL_DEFINE0(rt_sigreturn)
+{
+	unsigned long sp = PT_REGS_SP(&current->thread.regs);
+	struct um_rt_sigframe __user *frame =
+		(struct um_rt_sigframe __user *)sp;
+	sigset_t set;
+
+	if (copy_from_user(&set, &frame->uc_sigmask, sizeof(set)))
+		goto segfault;
+	set_current_blocked(&set);
+
+	if (restore_sc(&current->thread.regs, &frame->sc))
+		goto segfault;
+
+	/* Avoid ERESTART handling */
+	PT_REGS_SYSCALL_NR(&current->thread.regs) = -1;
+	return PT_REGS_SYSCALL_RET(&current->thread.regs);
+
+segfault:
+	force_sig(SIGSEGV);
+	return 0;
 }

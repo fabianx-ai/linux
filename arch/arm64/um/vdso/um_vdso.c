@@ -44,3 +44,14 @@ int __vdso_gettimeofday(struct __kernel_old_timeval *tv, struct timezone *tz)
 }
 int gettimeofday(struct __kernel_old_timeval *, struct timezone *)
 	__attribute__((weak, alias("__vdso_gettimeofday")));
+
+/*
+ * The signal-return trampoline: the guest kernel points x30 here when
+ * delivering a signal (arm64 has no SA_RESTORER). Naked: it runs with
+ * SP at the frame and must not touch the stack.
+ */
+void __attribute__((naked)) __kernel_rt_sigreturn(void)
+{
+	asm volatile("mov x8, %0\n"
+		     "svc #0" :: "i"(__NR_rt_sigreturn));
+}
