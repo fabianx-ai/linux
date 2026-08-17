@@ -178,6 +178,8 @@ retry:
 		vm_fault_t fault;
 
 		fault = handle_mm_fault(vma, address, flags, NULL);
+		/* TEMP DEBUG (M3b bring-up, remove me): fault result + walk */
+		printk("UMLDBG-HMF: addr=%lx fault=%x\n", address, fault);
 
 		if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
 			goto out_nosemaphore;
@@ -206,9 +208,18 @@ retry:
 		pmd = pmd_off(mm, address);
 		pte = pte_offset_kernel(pmd, address);
 		/* TEMP DEBUG (M3b bring-up, remove me): dump the fault walk */
-		printk("UMLDBG-WALK: addr=%lx pmd=%px *pmd=%llx pte=%px uphys=%lx svm=%lx evm=%lx\n",
-		       address, pmd, (unsigned long long)pmd_val(*pmd), pte,
-		       (unsigned long)uml_physmem, start_vm, end_vm);
+		{
+			pgd_t *pgd = pgd_offset(mm, address);
+			p4d_t *p4d = p4d_offset(pgd, address);
+			pud_t *pud = pud_offset(p4d, address);
+			unsigned long *pp = (unsigned long *)((unsigned long)pmd & PAGE_MASK);
+
+			printk("UMLDBG-WALK: addr=%lx *pgd=%llx *pud=%llx *pmd=%llx pte=%px pmdpg=%llx %llx %llx %llx\n",
+			       address, (unsigned long long)pgd_val(*pgd),
+			       (unsigned long long)pud_val(*pud),
+			       (unsigned long long)pmd_val(*pmd), pte,
+			       pp[0], pp[1], pp[2], pp[3]);
+		}
 	} while (!pte_present(*pte));
 	err = 0;
 	/*
