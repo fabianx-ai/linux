@@ -606,8 +606,10 @@ void userspace(struct uml_pt_regs *regs)
 			}
 
 			/* TEMP DEBUG (M3b bring-up, remove me): trace the seccomp dance */
-			printk("UMLDBG: sig=%d nr=%ld addr=%lx pc=%lx sp=%lx ps=%lx\n",
+			printk("UMLDBG: sig=%d nr=%ld x0=%lx x1=%lx x2=%lx x8=%lx addr=%lx pc=%lx sp=%lx ps=%lx\n",
 			       sig, (long)PT_SYSCALL_NR(regs->gp),
+			       regs->gp[HOST_X0], regs->gp[HOST_X1],
+			       regs->gp[HOST_X2], regs->gp[HOST_X8],
 			       (unsigned long)FAULT_ADDRESS(regs->faultinfo),
 			       regs->gp[HOST_PC], regs->gp[HOST_SP],
 			       regs->gp[HOST_PSTATE]);
