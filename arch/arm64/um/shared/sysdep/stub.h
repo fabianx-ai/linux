@@ -205,4 +205,16 @@ static __always_inline void stub_signal_return(void *frame)
 	__builtin_unreachable();
 }
 
+/*
+ * TPIDR_EL0 is EL0-writable and cannot be trapped, so unlike x86
+ * (which forces TLS through arch_prctl) the kernel never observes
+ * guest TLS writes. The trap handler runs with the guest's TPIDR
+ * intact — save it so get_stub_state can learn it and fork/resume
+ * can propagate it to new stubs.
+ */
+static __always_inline void stub_seccomp_save_state(struct stub_data_arch *arch)
+{
+	asm volatile ("mrs %0, TPIDR_EL0" : "=r" (arch->tls));
+}
+
 #endif
