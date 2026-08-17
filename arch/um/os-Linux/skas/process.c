@@ -559,6 +559,12 @@ void userspace(struct uml_pt_regs *regs)
 				       __func__, err);
 				fatal_sigsegv();
 			}
+#ifdef CONFIG_UML_ARM64
+			/* TEMP DEBUG (M3b bring-up, remove me): resume state */
+			printk("UMLDBG-RESUME: pid=%d pc=%lx sp=%lx x0=%lx tls=%lx\n",
+			       current->pid, regs->gp[HOST_PC], regs->gp[HOST_SP],
+			       regs->gp[HOST_X0], regs->gp[HOST_TLS]);
+#endif
 
 			/* Must have been reset by the syscall caller */
 			if (proc_data->restart_wait != 0)
