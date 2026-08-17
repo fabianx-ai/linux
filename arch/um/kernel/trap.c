@@ -452,6 +452,7 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 		p4d_t *__p4d = p4d_offset(__pgd, __pc);
 		pud_t *__pud = pud_offset(__p4d, __pc);
 		unsigned int __insn = 0;
+		unsigned long __pg = 0;
 
 		if (pud_val(*__pud)) {
 			pmd_t *__pmd = pmd_offset(__pud, __pc);
@@ -459,12 +460,19 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 			if (pmd_val(*__pmd)) {
 				pte_t *__pte = pte_offset_kernel(__pmd, __pc);
 
-				if (pte_present(*__pte))
-					__insn = *(unsigned int *)((unsigned long)uml_physmem + (pte_val(*__pte) & PAGE_MASK) + (__pc & (PAGE_SIZE - 1)));
+				if (pte_present(*__pte)) {
+					__pg = (unsigned long)uml_physmem +
+						(pte_val(*__pte) & PAGE_MASK);
+					__insn = *(unsigned int *)(__pg + (__pc & (PAGE_SIZE - 1)));
+				}
 			}
 		}
 		printk("UMLDBG-ILL: pc=%lx insn=%08x sic=%d siaddr=%lx\n",
 		       __pc, __insn, si->si_code, (unsigned long)si->si_addr);
+		if (__pg)
+			printk("UMLDBG-ILL: pgstart=%08x %08x %08x %08x\n",
+			       ((unsigned int *)__pg)[0], ((unsigned int *)__pg)[1],
+			       ((unsigned int *)__pg)[2], ((unsigned int *)__pg)[3]);
 	}
 #endif
 
