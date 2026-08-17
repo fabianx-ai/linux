@@ -34,7 +34,7 @@ targets += vdso-offsets.h
 
 quiet_cmd_vdsooff = VDSOOFF $@
       cmd_vdsooff = $(NM) --defined-only $(obj)/vdso.so.dbg | \
-		awk '$$3 == "__kernel_rt_sigreturn" { printf "#define VDSO_SIGRETURN_OFF 0x%s\n", $$1 }' > $@
+		awk '$$3 == "__kernel_rt_sigreturn" { printf "\#define VDSO_SIGRETURN_OFF 0x%s\n", $$1 }' > $@
 
 $(obj)/vdso-offsets.h: $(obj)/vdso.so.dbg
 	$(call cmd,vdsooff)
