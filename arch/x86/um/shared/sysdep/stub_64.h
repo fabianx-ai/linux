@@ -155,4 +155,14 @@ stub_seccomp_restore_state(struct stub_data_arch *arch)
 	arch->sync = 0;
 }
 
+/*
+ * x86 returns from the signal handler through the SA_RESTORER
+ * trampoline (stub_signal_restorer, in the stub page), so the
+ * rt_sigreturn svc is on the stub page and passes the seccomp
+ * filter's IP check. Nothing to do here.
+ */
+static __always_inline void stub_signal_return(void)
+{
+}
+
 #endif
