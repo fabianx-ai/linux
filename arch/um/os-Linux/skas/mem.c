@@ -65,7 +65,11 @@ static inline unsigned long *check_init_stack(struct mm_id * mm_idp,
 	return stack;
 }
 
-static unsigned long syscall_regs[MAX_REG_NR];
+/* Sized like exec_regs: get_safe_registers() memcpy()s sizeof(exec_regs)
+ * into this buffer, and the arm64 backend marshal reads internal slots
+ * past the ABI frame. A MAX_REG_NR buffer is overrun by 3 slots, which
+ * clobbered using_seccomp on x86 (seccomp mode silently disabled). */
+static unsigned long syscall_regs[MAX_REG_NR + 3];
 
 static int __init init_syscall_regs(void)
 {
