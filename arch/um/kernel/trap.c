@@ -177,27 +177,7 @@ retry:
 	do {
 		vm_fault_t fault;
 
-#ifdef CONFIG_UML_ARM64
-		/* TEMP DEBUG (M3b bring-up, remove me): pre-fault chain snapshot.
-		 * Reads only pgd/pud slots; folded p4d keeps the reads inside
-		 * pages we know are mapped (fresh mm: *pgd=0 -> pud slot reads
-		 * physmem page 0, garbage but harmless).
-		 */
-		if (is_user) {
-			pgd_t *__pgd = pgd_offset(mm, address);
-			p4d_t *__p4d = p4d_offset(__pgd, address);
-			pud_t *__pud = pud_offset(__p4d, address);
-
-			printk("UMLDBG-PRE: pid=%d addr=%lx *pgd=%llx *pud=%llx\n",
-			       current->pid, address,
-			       (unsigned long long)pgd_val(*__pgd),
-			       (unsigned long long)pud_val(*__pud));
-		}
-#endif
 		fault = handle_mm_fault(vma, address, flags, NULL);
-		/* TEMP DEBUG (M3b bring-up, remove me): fault result + vma */
-		printk("UMLDBG-HMF: addr=%lx fault=%x vma=%lx-%lx fl=%lx\n",
-		       address, fault, vma->vm_start, vma->vm_end, vma->vm_flags);
 
 		if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
 			goto out_nosemaphore;
@@ -225,22 +205,6 @@ retry:
 
 		pmd = pmd_off(mm, address);
 		pte = pte_offset_kernel(pmd, address);
-		/* TEMP DEBUG (M3b bring-up, remove me): dump the fault walk */
-		{
-			pgd_t *pgd = pgd_offset(mm, address);
-			p4d_t *p4d = p4d_offset(pgd, address);
-			pud_t *pud = pud_offset(p4d, address);
-			unsigned long *pp = (unsigned long *)((unsigned long)pmd & PAGE_MASK);
-
-			printk("UMLDBG-WALK: pid=%d mm=%px pgd=%px addr=%lx *pgd=%llx *pud=%llx *pmd=%llx pte=%px pmdpg=%llx %llx %llx %llx pgdpg=%llx %llx\n",
-			       current->pid, mm, mm->pgd, address,
-			       (unsigned long long)pgd_val(*pgd),
-			       (unsigned long long)pud_val(*pud),
-			       (unsigned long long)pmd_val(*pmd), pte,
-			       pp[0], pp[1], pp[2], pp[3],
-			       (unsigned long long)pgd_val(mm->pgd[0]),
-			       (unsigned long long)pgd_val(mm->pgd[1]));
-		}
 	} while (!pte_present(*pte));
 	err = 0;
 	/*
@@ -440,63 +404,6 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 			       "mount likely just ran out of space\n");
 		panic("Kernel mode signal %d", sig);
 	}
-
-#ifdef CONFIG_UML_ARM64
-	/* TEMP DEBUG (M3b bring-up, remove me): fetch the real insn word
-	 * behind a SIGILL and the host's si_code.
-	 */
-	if (sig == SIGILL) {
-		struct mm_struct *__mm = current->mm;
-		unsigned long __pc = UPT_IP(regs);
-		pgd_t *__pgd = pgd_offset(__mm, __pc);
-		p4d_t *__p4d = p4d_offset(__pgd, __pc);
-		pud_t *__pud = pud_offset(__p4d, __pc);
-		unsigned int __insn = 0;
-		unsigned long __pg = 0, __pte_phys = 0;
-
-		if (pud_val(*__pud)) {
-			pmd_t *__pmd = pmd_offset(__pud, __pc);
-
-			if (pmd_val(*__pmd)) {
-				pte_t *__pte = pte_offset_kernel(__pmd, __pc);
-
-				if (pte_present(*__pte)) {
-					__pte_phys = pte_val(*__pte) & PAGE_MASK;
-					__pg = (unsigned long)uml_physmem + __pte_phys;
-					__insn = *(unsigned int *)(__pg + (__pc & (PAGE_SIZE - 1)));
-				}
-			}
-		}
-		printk("UMLDBG-ILL: pc=%lx insn=%08x sic=%d siaddr=%lx\n",
-		       __pc, __insn, si->si_code, (unsigned long)si->si_addr);
-		if (__pg) {
-			struct vm_area_struct *__vma;
-
-			printk("UMLDBG-ILL: pgstart=%08x %08x %08x %08x\n",
-			       ((unsigned int *)__pg)[0], ((unsigned int *)__pg)[1],
-			       ((unsigned int *)__pg)[2], ((unsigned int *)__pg)[3]);
-
-			/* pte frame vs page-cache folio frame for this file page */
-			mmap_read_lock(__mm);
-			__vma = find_vma(__mm, __pc);
-			if (__vma && __vma->vm_start <= __pc && __vma->vm_file) {
-				unsigned long __idx = ((__pc - __vma->vm_start) >>
-						       PAGE_SHIFT) + __vma->vm_pgoff;
-				struct folio *__f = xa_load(&__vma->vm_file->f_mapping->i_pages,
-							    __idx);
-
-				printk("UMLDBG-ILL: ino=%lu idx=%lx pte_phys=%lx folio=%px folio_phys=%lx uptodate=%d\n",
-				       file_inode(__vma->vm_file)->i_ino, __idx,
-				       __pte_phys, __f,
-				       __f ? page_to_pfn(folio_page(__f, 0)) << PAGE_SHIFT : 0,
-				       __f ? folio_test_uptodate(__f) : -1);
-			} else {
-				printk("UMLDBG-ILL: no file vma for pc\n");
-			}
-			mmap_read_unlock(__mm);
-		}
-	}
-#endif
 
 	arch_examine_signal(sig, regs);
 

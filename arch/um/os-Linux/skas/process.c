@@ -91,17 +91,10 @@ void wait_stub_done(int pid)
 		return;
 
 bad_wait:
-	siginfo_t si;
 	err = ptrace_dump_regs(pid);
 	if (err)
 		printk(UM_KERN_ERR "Failed to get registers from stub, errno = %d\n",
 		       -err);
-	/* TEMP DEBUG (M3b bring-up, remove me): dump the stub's siginfo */
-	{
-		int src = ptrace(PTRACE_GETSIGINFO, pid, 0, &si);
-		printk(UM_KERN_ERR "%s : stub siginfo rc=%d signo=%d code=%d addr=%p\n",
-		       __func__, src, si.si_signo, si.si_code, si.si_addr);
-	}
 	printk(UM_KERN_ERR "%s : failed to wait for SIGTRAP, pid = %d, n = %d, errno = %d, status = 0x%x\n",
 	       __func__, pid, n, errno, status);
 	fatal_sigsegv();
@@ -559,12 +552,6 @@ void userspace(struct uml_pt_regs *regs)
 				       __func__, err);
 				fatal_sigsegv();
 			}
-#ifdef CONFIG_UML_ARM64
-			/* TEMP DEBUG (M3b bring-up, remove me): resume state */
-			printk("UMLDBG-RESUME: stubpid=%d pc=%lx sp=%lx x0=%lx tls=%lx\n",
-			       mm_id->pid, regs->gp[HOST_PC], regs->gp[HOST_SP],
-			       regs->gp[HOST_X0], regs->gp[HOST_TLS]);
-#endif
 
 			/* Must have been reset by the syscall caller */
 			if (proc_data->restart_wait != 0)
@@ -610,17 +597,6 @@ void userspace(struct uml_pt_regs *regs)
 
 				GET_FAULTINFO_FROM_MC(regs->faultinfo, mcontext);
 			}
-
-			/* TEMP DEBUG (M3b bring-up, remove me): trace the seccomp dance */
-#ifdef CONFIG_UML_ARM64
-			printk("UMLDBG: sig=%d nr=%ld x0=%lx x1=%lx x2=%lx x8=%lx addr=%lx pc=%lx sp=%lx ps=%lx\n",
-			       sig, (long)PT_SYSCALL_NR(regs->gp),
-			       regs->gp[HOST_X0], regs->gp[HOST_X1],
-			       regs->gp[HOST_X2], regs->gp[HOST_X8],
-			       (unsigned long)FAULT_ADDRESS(regs->faultinfo),
-			       regs->gp[HOST_PC], regs->gp[HOST_SP],
-			       regs->gp[HOST_PSTATE]);
-#endif
 		} else {
 			int pid = mm_id->pid;
 
