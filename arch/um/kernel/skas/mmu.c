@@ -136,6 +136,17 @@ static irqreturn_t mm_sigchld_irq(int irq, void* dev)
 				stub_data->futex = FUTEX_IN_KERN;
 #if IS_ENABLED(CONFIG_SMP)
 				os_futex_wake(&stub_data->futex);
+#else
+				/*
+				 * On !SMP the wake is skipped, so a futex
+				 * waiter in wait_stub_done_seccomp() is only
+				 * rescued if the SIGCHLD interrupts its wait
+				 * (EINTR); otherwise the guest hangs with a
+				 * dead stub instead of panicking as x86 does.
+				 * The intended fix (bounded futex wait +
+				 * liveness probe + panic) changes shared wait
+				 * logic and is deliberately deferred.
+				 */
 #endif
 
 				/*
