@@ -92,8 +92,18 @@ int get_stub_state(struct uml_pt_regs *regs, struct stub_data *data,
 	if (!fpstate_stub)
 		return -EINVAL;
 
-	if (fp_size_out)
+	if (fp_size_out) {
+		/*
+		 * Size-probe call (init_seccomp sizes its allocation this
+		 * way): report the frame size and return WITHOUT copying.
+		 * regs may be allocated for the bare struct here, so the
+		 * memcpy below would overrun it — on arm64 host_fp_size is
+		 * pre-initialized to UM_FPSIMD_SIZE, so the capacity check
+		 * passes and the copy lands in the heap, corrupting it.
+		 */
 		*fp_size_out = fp_size;
+		return 0;
+	}
 
 	if (fp_size > host_fp_size)
 		return -ENOSPC;
