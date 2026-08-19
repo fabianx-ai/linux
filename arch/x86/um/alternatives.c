@@ -9,6 +9,7 @@
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <asm/alternative.h>
+#include <asm/text-patching.h>
 
 void apply_seal_endbr(s32 *start, s32 *end)
 {
