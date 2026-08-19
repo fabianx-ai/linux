@@ -41,7 +41,6 @@ long arch_ptrace(struct task_struct *child, long request,
 		 unsigned long addr, unsigned long data)
 {
 	int ret;
-	unsigned long __user *p = (void __user *)data;
 
 	switch (request) {
 	/* read the word at location addr in the USER area. */
