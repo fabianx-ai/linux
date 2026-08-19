@@ -101,9 +101,9 @@ extern struct cpuinfo_um boot_cpu_data;
 
 #define STACKSLOTS_PER_LINE 4
 
-#define current_sp() ({ unsigned long _sp; \
+#define current_sp() ({ void *_sp; \
 			asm volatile("mov %0, sp" : "=r" (_sp)); _sp; })
-#define current_bp() ({ unsigned long _bp; \
+#define current_bp() ({ void *_bp; \
 			asm volatile("mov %0, x29" : "=r" (_bp)); _bp; })
 
 #define KSTK_REG(tsk, reg) get_thread_reg(reg, &tsk->thread.switch_buf)
