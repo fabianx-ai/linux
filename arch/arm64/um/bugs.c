@@ -4,6 +4,7 @@
  * empty (mirroring arch/x86/um/bugs_64.c; nothing to probe in v0).
  */
 #include <sysdep/ptrace.h>
+#include <arch.h>
 
 void arch_check_bugs(void)
 {

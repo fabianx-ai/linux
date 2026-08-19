@@ -103,7 +103,7 @@ extern struct cpuinfo_um boot_cpu_data;
 
 #define current_sp() ({ void *_sp; \
 			asm volatile("mov %0, sp" : "=r" (_sp)); _sp; })
-#define current_bp() ({ void *_bp; \
+#define current_bp() ({ unsigned long _bp; \
 			asm volatile("mov %0, x29" : "=r" (_bp)); _bp; })
 
 #define KSTK_REG(tsk, reg) get_thread_reg(reg, &tsk->thread.switch_buf)
