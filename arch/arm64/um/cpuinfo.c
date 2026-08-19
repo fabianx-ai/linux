@@ -6,6 +6,7 @@
  */
 #include <linux/seq_file.h>
 #include <linux/string.h>
+#include <arch.h>
 
 static char arm64_features[256];
 

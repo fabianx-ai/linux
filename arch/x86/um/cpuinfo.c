@@ -8,6 +8,7 @@
 #include <linux/string_choices.h>
 #include <asm/cpufeature.h>
 #include <asm/processor.h>
+#include <arch.h>
 
 void arch_parse_cpu_flags(char *line)
 {
