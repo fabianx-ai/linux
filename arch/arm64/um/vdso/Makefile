@@ -4,7 +4,7 @@
 #
 
 # files to link into the vdso
-vobjs-y := vdso-note.o um_vdso.o
+vobjs-y := vdso-note.o um_vdso.o sigreturn.o
 
 # files to link into kernel
 obj-y += vdso.o vma.o

@@ -46,19 +46,8 @@ int gettimeofday(struct __kernel_old_timeval *, struct timezone *)
 	__attribute__((weak, alias("__vdso_gettimeofday")));
 
 /*
- * The signal-return trampoline: the guest kernel points x30 here when
- * delivering a signal (arm64 has no SA_RESTORER). Naked: it runs with
- * SP at the frame and must not touch the stack — so the body must be
- * basic asm only; an operand (%0) would make GCC drop the naked
- * attribute and grow a sigframe-clobbering prologue.
+ * __kernel_rt_sigreturn, the signal-return trampoline the guest kernel
+ * points x30 at when delivering a signal (arm64 has no SA_RESTORER),
+ * lives in sigreturn.S — real assembly, because aarch64 GCC may ignore
+ * the naked attribute and emit a sigframe-clobbering prologue.
  */
-void __kernel_rt_sigreturn(void);
-void __attribute__((naked)) __kernel_rt_sigreturn(void)
-{
-#define __xstr(x) #x
-#define __str(x) __xstr(x)
-	asm volatile("mov x8, #" __str(__NR_rt_sigreturn) "\n"
-		     "svc #0");
-#undef __str
-#undef __xstr
-}
