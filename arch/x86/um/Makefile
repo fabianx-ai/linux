@@ -41,6 +41,8 @@ subarch-$(CONFIG_UPROBES) += ../kernel/uprobes.o ../lib/insn.o ../lib/inat.o
 
 # kprobes reuse the same decoder objects uprobes already wire in
 subarch-$(CONFIG_KPROBES) += ../kernel/kprobes/core.o
+
+obj-$(CONFIG_RETHOOK) += rethook.o
 subarch-$(CONFIG_KPROBES) += $(if $(CONFIG_UPROBES),,../lib/insn.o ../lib/inat.o)
 
 USER_OBJS := bugs_$(BITS).o ptrace_user.o fault.o

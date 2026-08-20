@@ -30,6 +30,10 @@ config UML_X86
 	# HAVE_KRETPROBES arrives with the rethook trampoline (D3 rung 3).
 	select HAVE_KPROBES if 64BIT
 	select HAVE_REGS_AND_STACK_ACCESS_API if 64BIT
+	# rethook trampoline in arch/x86/um/rethook.c → KRETPROBES via
+	# KRETPROBE_ON_RETHOOK (no legacy asm kretprobe trampoline exists
+	# on modern x86 to reuse)
+	select HAVE_RETHOOK if 64BIT
 
 # UML/x86 reuses arch/x86/kernel/uprobes.c via subarch-y; the guest-user
 # int3/single-step relay arrives as SIGTRAP through the skas trap path.
