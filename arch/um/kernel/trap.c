@@ -438,7 +438,8 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 	 * them to the uprobe core directly (the arm64/riscv pattern); if
 	 * consumed, the guest task must not see a signal.
 	 */
-	if (IS_ENABLED(CONFIG_UPROBES) && sig == SIGTRAP && si) {
+#ifdef CONFIG_UPROBES
+	if (sig == SIGTRAP && si) {
 		struct pt_regs *pregs = container_of(regs, struct pt_regs, regs);
 
 		if (si->si_code == TRAP_TRACE) {
@@ -449,6 +450,7 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 				return;
 		}
 	}
+#endif
 
 	arch_examine_signal(sig, regs);
 
