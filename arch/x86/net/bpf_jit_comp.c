@@ -4193,7 +4193,17 @@ bool bpf_jit_supports_subprog_tailcalls(void)
 
 bool bpf_jit_supports_percpu_insn(void)
 {
+#ifdef CONFIG_UML
+	/*
+	 * The JIT lowers percpu accesses to gs:[this_cpu_off]; a UML
+	 * kernel process has the HOST's TLS in gs, so the inlined lookup
+	 * computes a wild address (D3: percpu-array counters never moved,
+	 * e.g. every bpftrace count()). The C helper path is correct.
+	 */
+	return false;
+#else
 	return true;
+#endif
 }
 
 void bpf_jit_free(struct bpf_prog *prog)
