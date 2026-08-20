@@ -23,6 +23,7 @@
 #include <asm/cfi.h>
 #include <asm/nops.h>
 #include <asm/set_memory.h>
+#include <asm/text-patching.h>	/* text_poke_set/smp_text_poke_single protos */
 
 void *text_poke_set(void *addr, int c, size_t len)
 {
