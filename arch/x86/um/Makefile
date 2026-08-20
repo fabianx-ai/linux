@@ -39,6 +39,10 @@ subarch-$(CONFIG_BPF_JIT) += ../net/bpf_jit_comp.o ../entry/clearbhb.o ../lib/no
 
 subarch-$(CONFIG_UPROBES) += ../kernel/uprobes.o ../lib/insn.o ../lib/inat.o
 
+# kprobes reuse the same decoder objects uprobes already wire in
+subarch-$(CONFIG_KPROBES) += ../kernel/kprobes/core.o
+subarch-$(CONFIG_KPROBES) += $(if $(CONFIG_UPROBES),,../lib/insn.o ../lib/inat.o)
+
 USER_OBJS := bugs_$(BITS).o ptrace_user.o fault.o
 
 $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS) \
