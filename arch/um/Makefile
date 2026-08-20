@@ -128,7 +128,11 @@ archprepare: $(cpufeaturemasks.hdr)
 # Same generator as arch/x86/lib/Makefile:17-25; ARCH=um never runs that
 # Makefile, so produce the (arch-constant) table here.
 
-inat_tables.c := arch/x86/lib/inat-tables.c
+# The decoder table is consumed by arch/x86/lib/inat.c's quoted include,
+# which resolves next to the source file — so generate into the srctree
+# unconditionally (O= builds, e.g. kunit, have no arch/x86/lib/ in the
+# objtree; in-tree builds are unchanged).
+inat_tables.c := $(srctree)/arch/x86/lib/inat-tables.c
 
 $(inat_tables.c): $(srctree)/arch/x86/tools/gen-insn-attr-x86.awk $(srctree)/arch/x86/lib/x86-opcode-map.txt
 	$(AWK) -f $^ > $@
