@@ -10,6 +10,7 @@
 #include <linux/uaccess.h>
 #include <linux/sched/debug.h>
 #include <linux/uprobes.h>
+#include <linux/kprobes.h>
 #include <asm/current.h>
 #include <asm/tlbflush.h>
 #include <arch.h>
@@ -400,6 +401,28 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 {
 	int code, err;
 	if (!UPT_IS_USER(regs)) {
+#ifdef CONFIG_KPROBES
+		/*
+		 * D3: a kernel-mode int3 (kprobe hit, or completion of a
+		 * detour-XOL step) arrives here as a host SIGTRAP. UML
+		 * raises no die chain, so join the kprobe core directly
+		 * (the arm64/riscv pattern, same as the uprobe relay
+		 * below). sig_handler_common only fills regs from the
+		 * mcontext for SIGSEGV, so do it here; after a consumed
+		 * probe write the (possibly redirected) state back — the
+		 * mcontext is the authoritative store.
+		 */
+		if (sig == SIGTRAP && mc) {
+			struct pt_regs *pregs =
+				container_of(regs, struct pt_regs, regs);
+
+			mc_get_regs(regs, mc);
+			if (kprobe_int3_handler(pregs)) {
+				mc_set_regs(regs, mc, 0);
+				return;
+			}
+		}
+#endif
 		if (sig == SIGBUS)
 			printk(KERN_ERR "Bus error - the host /dev/shm or /tmp "
 			       "mount likely just ran out of space\n");

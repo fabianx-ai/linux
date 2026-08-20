@@ -47,6 +47,16 @@ void get_regs_from_mc(struct uml_pt_regs *regs, mcontext_t *mc)
 #endif
 }
 
+void mc_get_regs(struct uml_pt_regs *regs, void *mc)
+{
+	get_regs_from_mc(regs, mc);
+}
+
+void mc_set_regs(struct uml_pt_regs *regs, void *mc, int single_stepping)
+{
+	get_mc_from_regs(regs, mc, single_stepping);
+}
+
 void mc_set_rip(void *_mc, void *target)
 {
 	mcontext_t *mc = _mc;
