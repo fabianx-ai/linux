@@ -498,14 +498,10 @@ void *text_poke_copy(void *addr, const void *opcode, size_t len)
 }
 
 /*
- * um applies no alternatives patching, so no text range is ever reserved
- * for one; kprobes' arch_prepare_kprobe() consults this.
+ * um applies no alternatives patching: x86's static inline
+ * alternatives_text_reserved() (asm/alternative.h) returns 0 here, which is
+ * what kprobes' arch_prepare_kprobe() consults.
  */
-int alternatives_text_reserved(void *start, void *end)
-{
-	return 0;
-}
-
 void smp_text_poke_sync_each_cpu(void)
 {
 }
