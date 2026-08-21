@@ -229,6 +229,18 @@ static bool collect_one_slot(struct kprobe_insn_page *kip, int idx)
 static int collect_garbage_slots(struct kprobe_insn_cache *c)
 {
 	struct kprobe_insn_page *kip, *next;
+	unsigned long start;
+
+	/*
+	 * F69/H2 discriminator: the inline sweep takes c->mutex (caller) and
+	 * sleeps in synchronize_rcu(). Under UP-UML a grace period needs the
+	 * scheduler tick; if this runs from a signal-nested or trace-blocked
+	 * context it may never complete. Log entry context + duration so a
+	 * wedge can be attributed to the sweep.
+	 */
+	start = jiffies;
+	pr_info("kprobe: gc enter nr_garbage=%d preempt_count=%x in_atomic=%d\n",
+		c->nr_garbage, preempt_count(), in_atomic());
 
 	/* Ensure no-one is interrupted on the garbages */
 	synchronize_rcu();
@@ -245,6 +257,7 @@ static int collect_garbage_slots(struct kprobe_insn_cache *c)
 		}
 	}
 	c->nr_garbage = 0;
+	pr_info("kprobe: gc done in %lu ms\n", jiffies_to_msecs(jiffies - start));
 	return 0;
 }
 

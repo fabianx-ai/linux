@@ -46,6 +46,8 @@
 #include <linux/set_memory.h>
 #include <linux/cfi.h>
 #include <linux/execmem.h>
+#include <linux/moduleparam.h>
+#include <linux/limits.h>
 
 #include <asm/text-patching.h>
 #include <asm/cacheflush.h>
@@ -63,6 +65,35 @@
 #endif
 
 #include "common.h"
+
+/*
+ * F69/H3 instrumentation: set kprobe.boost_debug=1 to log every boosted
+ * jump's slot->site distance (churn-correlation evidence).
+ */
+static int kprobe_boost_debug __read_mostly;
+module_param_named(boost_debug, kprobe_boost_debug, int, 0644);
+
+/*
+ * F69/H1 discriminator: counts int3 hits for a probe different from
+ * current_kprobe (see kprobe_int3_handler). Native x86 cannot produce these.
+ * Exported via debugfs-adjacent module param for the churn harness to poll.
+ */
+static DEFINE_PER_CPU(unsigned long, kprobe_foreign_reenter);
+
+static int kprobe_foreign_reenter_get(char *buf, const struct kernel_param *kp)
+{
+	int cpu;
+	unsigned long total = 0;
+
+	for_each_possible_cpu(cpu)
+		total += per_cpu(kprobe_foreign_reenter, cpu);
+	return sysfs_emit(buf, "%lu\n", total);
+}
+static const struct kernel_param_ops kprobe_foreign_reenter_ops = {
+	.flags	= KERNEL_PARAM_OPS_FL_NOARG,
+	.get	= kprobe_foreign_reenter_get,
+};
+module_param_cb(foreign_reenter, &kprobe_foreign_reenter_ops, NULL, 0444);
 
 DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
 DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
@@ -128,6 +159,26 @@ __synthesize_relative_insn(void *dest, void *from, void *to, u8 op)
 /* Insert a jump instruction at address 'from', which jumps to address 'to'.*/
 void synthesize_reljump(void *dest, void *from, void *to)
 {
+	long disp = (long)(to) - ((long)(from) + 5);
+
+#ifdef CONFIG_UML
+	/*
+	 * F69/H3 discriminator: a boosted kprobe's trailing jmp must reach the
+	 * probe site from the XOL slot. __synthesize_relative_insn() truncates
+	 * the displacement to s32 silently; an out-of-range jump wedges the
+	 * guest in an instruction-fetch loop. Fail loudly instead, and log the
+	 * distance so churn-driven drift of the execmem KPROBES window can be
+	 * correlated with flakiness.
+	 */
+	if (disp > INT_MAX || disp < INT_MIN) {
+		pr_err("kprobe: rel32 out of range: from %px to %px disp %ld\n",
+		       from, to, disp);
+		WARN_ON_ONCE(1);
+	}
+	if (kprobe_boost_debug)
+		pr_info("kprobe: boost jump from %px to %px disp %ld\n",
+			from, to, disp);
+#endif
 	__synthesize_relative_insn(dest, from, to, JMP32_INSN_OPCODE);
 }
 NOKPROBE_SYMBOL(synthesize_reljump);
@@ -1105,6 +1156,27 @@ int kprobe_int3_handler(struct pt_regs *regs)
 
 	if (p) {
 		if (kprobe_running()) {
+#ifdef CONFIG_UML
+			/*
+			 * F69/H1 discriminator: on native x86 this path is
+			 * only reachable for the same probe (IF=0 makes int3
+			 * handling atomic). Under UML a nested host-signal
+			 * tick can land here while another probe is mid-
+			 * single-step; setup_singlestep() below then
+			 * overwrites the outer probe's kprobe_ctlblk and
+			 * current_kprobe, and resume_singlestep() later
+			 * computes a garbage return IP. Count and flag every
+			 * such foreign reentry — nonzero counts during the
+			 * churn repro confirm H1.
+			 */
+			if (p != __this_cpu_read(current_kprobe)) {
+				this_cpu_inc(kprobe_foreign_reenter);
+				pr_warn_ratelimited(
+					"kprobe: FOREIGN reentry: hit %ps while %ps is in status %lu\n",
+					p->addr, __this_cpu_read(current_kprobe)->addr,
+					kcb->kprobe_status);
+			}
+#endif
 			if (reenter_kprobe(p, regs, kcb))
 				return 1;
 		} else {
