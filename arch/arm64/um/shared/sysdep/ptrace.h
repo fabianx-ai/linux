@@ -13,6 +13,13 @@
 #define MAX_REG_OFFSET (UM_FRAME_SIZE)
 #define MAX_REG_NR ((MAX_REG_OFFSET) / sizeof(unsigned long))
 
+/*
+ * Full gp-frame size in unsigned longs: the ABI frame plus the
+ * UML-internal slots below (HOST_TLS, HOST_SYSCALLNO, HOST_ARG0).
+ * Shared-core gp[] buffers size off this, never MAX_REG_NR + N.
+ */
+#define UM_GP_SLOTS (MAX_REG_NR + 3)
+
 /* UML-internal slot past the ABI frame (x0..x30, sp, pc, pstate): the
  * guest's TPIDR_EL0 value. */
 #define HOST_TLS 34
@@ -49,7 +56,7 @@
 extern unsigned long host_fp_size;
 
 struct uml_pt_regs {
-	unsigned long gp[MAX_REG_NR + 3]; /* +3: HOST_TLS, HOST_SYSCALLNO, HOST_ARG0 */
+	unsigned long gp[UM_GP_SLOTS]; /* ABI frame + HOST_TLS/SYSCALLNO/ARG0 */
 	struct faultinfo faultinfo;
 	long syscall;
 	int is_user;

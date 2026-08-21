@@ -58,7 +58,7 @@ const char *ptrace_reg_name(int idx)
 
 long sysdep_ptrace_peekuser(long pid, long off, long *val)
 {
-	unsigned long regs[MAX_REG_NR + 3]; /* incl. backend-internal slots */
+	unsigned long regs[UM_GP_SLOTS]; /* full gp frame incl. internal slots */
 	int err;
 
 	if (off == PT_SYSCALL_NR_OFFSET) {
@@ -85,7 +85,7 @@ long sysdep_ptrace_peekuser(long pid, long off, long *val)
 
 long sysdep_ptrace_pokeuser(long pid, long off, long val)
 {
-	unsigned long regs[MAX_REG_NR + 3]; /* incl. backend-internal slots */
+	unsigned long regs[UM_GP_SLOTS]; /* full gp frame incl. internal slots */
 	int err;
 
 	if (off == PT_SYSCALL_NR_OFFSET) {
