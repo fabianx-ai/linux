@@ -9,7 +9,7 @@
 #ifndef __UM_S390_SIGNAL_H
 #define __UM_S390_SIGNAL_H
 
-#include <uapi/asm/signal.h>
+#include <asm-generic/signal.h>
 #include <uapi/asm/siginfo.h>
 
 static inline void __user *arch_untagged_si_addr(void __user *addr,

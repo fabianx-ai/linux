@@ -10,6 +10,7 @@
 #include <asm/ptrace.h>
 #include <asm/user.h>
 #include <skas.h>
+#include <linux/string.h>
 
 #define CORE_DUMP_USE_REGSET
 
@@ -62,12 +63,14 @@ extern int arch_setup_additional_pages(struct linux_binprm *bprm,
 
 extern unsigned long um_vdso_addr;
 extern unsigned long um_minsigstksz;
-#define AT_SYSINFO_EHDR 33
-#define ARCH_DLINFO \
-	NEW_AUX_ENT(AT_SYSINFO_EHDR, um_vdso_addr); \
-	NEW_AUX_ENT(AT_MINSIGSTKSZ, um_minsigstksz)
-/* NEW_AUX_ENT count in ARCH_DLINFO (x86 UM leaves this 0 and relies on slack) */
-#define AT_VECTOR_SIZE_ARCH 2
+/*
+ * ARCH_DLINFO ships two NEW_AUX_ENT entries (vdso + minsigstksz).
+ * Native s390 sets AT_VECTOR_SIZE_ARCH = 1 in uapi auxvec.h; the
+ * extra entry is covered by AT_VECTOR_SIZE's +1 slack, exactly as
+ * x86_64 UM does with AT_VECTOR_SIZE_ARCH unset. Do NOT redefine it
+ * here — that changes sizeof(mm->saved_auxv) and breaks the
+ * prctl_set_auxv BUILD_BUG_ON.
+ */
 
 typedef unsigned long elf_greg_t;
 

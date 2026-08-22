@@ -15,7 +15,6 @@
  */
 #include <stdio.h>
 #include <stddef.h>
-#include <signal.h>
 #include <poll.h>
 #include <sys/mman.h>
 #include <sys/uio.h>

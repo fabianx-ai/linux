@@ -10,8 +10,10 @@
 # maps libc around 0x3ff_xxxxxxxx (box-verified), leaving the low
 # half of user VA free for the UML image + stub. [P8]
 START := 0x60000000
+# Optional ccache masquerade: PATH=~/.ccache-bin:$PATH makes
+# s390x-linux-gnu-gcc resolve through ccache (kbuild's tool probes
+# stay on the real name; CC="ccache ..." breaks them).
 
-KBUILD_LDFLAGS	+= -m elf64_s390 -EB
 
 ELF_ARCH	:= s390
 ELF_FORMAT	:= elf64-s390

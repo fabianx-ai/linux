@@ -14,7 +14,6 @@
 #include <stddef.h>
 #include <asm/unistd.h>
 #include <sys/mman.h>
-#include <signal.h>
 #include <as-layout.h>
 #include <stub-data.h>
 #include <sysdep/ptrace_user.h>
@@ -81,12 +80,11 @@ static __always_inline long stub_syscall0(long syscall)
 }
 
 #define STUB_SYSCALL(n)							\
-static __always_inline long stub_syscall##n(long syscall		\
+static __always_inline long stub_syscall##n(long nr			\
 		STUB_SYSCALL_PARM_##n)					\
 {									\
-	register long r1 __asm__("1") = syscall;			\
-	register long r2 __asm__("2") = arg1;				\
-	STUB_SYSCALL_REGS_##n						\
+	register long r1 __asm__("1") = nr;				\
+	STUB_SYSCALL_REGS_##n;						\
 	__asm__ volatile ("svc 0"					\
 		: "+d" (r2)						\
 		: "d" (r1)						\
@@ -94,16 +92,18 @@ static __always_inline long stub_syscall##n(long syscall		\
 	return r2;							\
 }
 
-#define STUB_SYSCALL_PARM_1
-#define STUB_SYSCALL_PARM_2 , long arg2
+
+#define STUB_SYSCALL_PARM_1 , long arg1
+#define STUB_SYSCALL_PARM_2 STUB_SYSCALL_PARM_1, long arg2
 #define STUB_SYSCALL_PARM_3 STUB_SYSCALL_PARM_2, long arg3
 #define STUB_SYSCALL_PARM_4 STUB_SYSCALL_PARM_3, long arg4
 #define STUB_SYSCALL_PARM_5 STUB_SYSCALL_PARM_4, long arg5
 #define STUB_SYSCALL_PARM_6 STUB_SYSCALL_PARM_5, long arg6
 
-#define STUB_SYSCALL_REGS_0
-#define STUB_SYSCALL_REGS_1
-#define STUB_SYSCALL_REGS_2 register long r3 __asm__("3") = arg2
+#define STUB_SYSCALL_REGS_0 register long r2 __asm__("2") = arg1
+#define STUB_SYSCALL_REGS_1 register long r2 __asm__("2") = arg1
+#define STUB_SYSCALL_REGS_2 STUB_SYSCALL_REGS_1;			\
+	register long r3 __asm__("3") = arg2
 #define STUB_SYSCALL_REGS_3 STUB_SYSCALL_REGS_2;			\
 	register long r4 __asm__("4") = arg3
 #define STUB_SYSCALL_REGS_4 STUB_SYSCALL_REGS_3;			\
@@ -147,12 +147,17 @@ static __always_inline void *get_stub_data(void)
 }
 
 #define stub_start(fn)							\
-	asm volatile (							\
-		"	aghi	%r15, %0\n"				\
-		"	larl	%r1, %1\n"				\
-		"	basr	%r14, %r1\n"				\
-		:: "i" (STUB_SIZE),					\
-		   "i" (&fn) : "r1", "r14", "memory")
+	do {								\
+		asm volatile (						\
+			"	aghi	%%r15, %0\n"			\
+			"	larl	%%r1, 3f\n"			\
+			"	basr	%%r14, %%r1\n"			\
+			"	j	4f\n"				\
+			"3:	brasl	%%r14, %1\n"			\
+			"4:\n"					\
+			:: "i" (STUB_SIZE), "i" (&fn)		\
+			: "r1", "r14", "memory");		\
+	} while (0)
 
 /*
  * Nothing to restore outside the mcontext: TLS/acrs ride the frame
@@ -177,6 +182,8 @@ static __always_inline void stub_signal_return(void *frame)
 static __always_inline void stub_seccomp_save_state(struct stub_data_arch *arch)
 {
 }
+
+#include <signal.h>
 
 extern void stub_segv_handler(int, siginfo_t *, void *);
 extern void stub_syscall_handler(void);
