@@ -8,6 +8,7 @@
 #include <linux/syscalls.h>
 #include <linux/mm.h>
 #include <linux/err.h>
+#include <linux/personality.h>
 
 struct mmap_arg_struct {
 	unsigned long addr;
@@ -29,4 +30,27 @@ SYSCALL_DEFINE1(mmap, struct mmap_arg_struct __user *, arg)
 
 	return ksys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd,
 			       a.offset >> PAGE_SHIFT);
+}
+
+/*
+ * Native s390 personality wrapper (arch/s390/kernel/syscall.c): the
+ * PER_LINUX32 sticky bit survives an upgrade attempt to PER_LINUX,
+ * because UML s390x is 64-bit-only and compat personalities would
+ * silently change syscall decoding. Shape copied verbatim.
+ */
+SYSCALL_DEFINE1(s390_personality, unsigned int, personality)
+{
+	unsigned int ret = current->personality;
+
+	if (personality(current->personality) == PER_LINUX32 &&
+	    personality(personality) == PER_LINUX)
+		personality |= PER_LINUX32;
+
+	if (personality != 0xffffffff)
+		set_personality(personality);
+
+	if (personality(ret) == PER_LINUX32)
+		ret &= ~PER_LINUX32;
+
+	return ret;
 }
