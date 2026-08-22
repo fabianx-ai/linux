@@ -164,3 +164,9 @@ long subarch_ptrace(struct task_struct *child, long request,
 {
 	return -EIO;
 }
+
+/* s390 has no host-ISA instructions UML emulates on SIGILL. */
+int arch_sigill_fixup(struct uml_pt_regs *regs)
+{
+	return 0;
+}
