@@ -39,12 +39,8 @@
 
 /*
  * s390 has ONLY old_mmap (__NR_mmap = 90 -> sys_old_mmap, one arg =
- * pointer to struct mmap_arg_struct). Stage the arg struct and call
- * it with a single argument. [F-s3, P1]
+ * pointer to a struct mmap_arg_struct).
  */
-#define MMAP_OFFSET(o) (o)
-#define STUB_MMAP_ARGSTYPE struct mmap_arg_struct
-
 struct mmap_arg_struct {
 	unsigned long addr;
 	unsigned long len;
@@ -53,6 +49,21 @@ struct mmap_arg_struct {
 	unsigned long fd;
 	unsigned long offset;
 };
+
+/*
+ * Backend mmap invocation: stage the args in a struct and call the
+ * single-arg syscall. [F-s3, P1]
+ */
+#define STUB_MMAP_CALL(res, addr, len, prot, flags, fd, off)		\
+	do {								\
+		struct mmap_arg_struct __margs = {			\
+			(addr), (len), (prot), (flags),			\
+			(unsigned long)(fd), (off),			\
+		};							\
+		(res) = stub_syscall1(STUB_MMAP_NR, (long)&__margs);	\
+	} while (0)
+
+#define MMAP_OFFSET(o) (o)
 
 #define __syscall_clobber "memory"
 

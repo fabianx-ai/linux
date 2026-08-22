@@ -30,6 +30,11 @@
 #define STUB_TLS_SYSCALL_NR (0x0f0000 + 5)
 #define MMAP_OFFSET(o) (o)
 
+/* Backend mmap invocation: default direct 6-arg syscall form. */
+#define STUB_MMAP_CALL(res, addr, len, prot, flags, fd, off)		\
+	((res) = stub_syscall6(STUB_MMAP_NR, (addr), (len), (prot),	\
+			       (flags), (fd), (off)))
+
 #define __syscall_clobber "memory"
 
 static __always_inline long stub_syscall0(long syscall)
