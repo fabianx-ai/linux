@@ -15,13 +15,19 @@
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <asm/unistd.h>
-#include <uapi/asm/ptrace.h>		/* PSW_MASK_USER, PSW_MASK_PSTATE */
+#include <sysdep/ptrace_user.h>
 #include <as-layout.h>
 #include <frame_kern.h>
 #include <registers.h>
 #include <skas.h>
 #include <sysdep/ptrace.h>
-#include <sysdep/ptrace_user.h>
+/*
+ * PSW user-legal bits (uapi/asm/ptrace.h values) — defined locally
+ * because that header's struct user_regs_struct collides with the
+ * backend-owned one in asm/ptrace.h.
+ */
+#define UM_S390_PSW_MASK_USER	_AC(0x0000FF0180000000, UL)
+#define UM_S390_PSW_MASK_PSTATE	_AC(0x0001000000000000, UL)
 
 extern unsigned long um_vdso_sigreturn;
 
@@ -80,7 +86,7 @@ static void build_mc(struct um_mcontext *mc, struct pt_regs *regs)
 	struct uml_pt_regs *ur = &regs->regs;
 	int i;
 
-	mc->psw.mask = ur->gp[HOST_PSW_MASK] | PSW_MASK_PSTATE;
+	mc->psw.mask = ur->gp[HOST_PSW_MASK] | UM_S390_PSW_MASK_PSTATE;
 	mc->psw.addr = ur->gp[HOST_PSW_ADDR];
 	for (i = 0; i < 16; i++)
 		mc->gprs[i] = ur->gp[HOST_GPR0 + i];
@@ -151,8 +157,8 @@ static int restore_mc(struct pt_regs *regs,
 	/* Sanitize PSW: keep only user-legal bits, force problem state.
 	 * The host PTRACE_SETREGSET NT_PRSTATUS is the backstop (it
 	 * rejects illegal PSWs); this is defense-in-depth. */
-	mc.psw.mask &= PSW_MASK_USER;
-	mc.psw.mask |= PSW_MASK_PSTATE;
+	mc.psw.mask &= UM_S390_PSW_MASK_USER;
+	mc.psw.mask |= UM_S390_PSW_MASK_PSTATE;
 
 	ur->gp[HOST_PSW_MASK] = mc.psw.mask;
 	ur->gp[HOST_PSW_ADDR] = mc.psw.addr;

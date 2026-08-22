@@ -5,13 +5,21 @@
 # surfaces in dependency order and each becomes an object here as it
 # is written (M3b bring-up, per DESIGN-um-s390x §2).
 
-obj-y = ptrace_user.o
+obj-y = ptrace.o subarch.o delay.o os-Linux/ sys_call_table.o ptrace_user.o syscalls.o bugs.o fault.o sysrq.o signal.o tls.o vdso/ setjmp_64.o stub_segv.o cpuinfo.o
+
+# Native s390 checksum object (csum_partial, csum_partial_copy_nocheck
+# — the CKSM instruction implementation). The guest CPU *is* the host
+# Z CPU, so the native code is valid here; mirrors arm64's ../lib/csum.o.
+subarch-y = ../lib/csum-partial.o
 
 $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
 targets += user-offsets.s
 
 include/generated/user_constants.h: $(obj)/user-offsets.s FORCE
 	$(call filechk,offsets,__USER_CONSTANT_H__)
+
+UNPROFILE_OBJS := stub_segv.o
+CFLAGS_stub_segv.o := $(CFLAGS_NO_HARDENING)
 
 # USER_OBJS (%_user.o) get the host-side compile flags via these rules.
 include $(srctree)/arch/um/scripts/Makefile.rules

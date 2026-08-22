@@ -61,6 +61,7 @@ int ptrace_setregs(long pid, unsigned long *regs)
 		.iov_len = UM_FRAME_SIZE,
 	};
 
+
 	if (ptrace(PTRACE_SETREGSET, pid, (void *)NT_PRSTATUS, &iov) < 0)
 		return -errno;
 	return 0;
@@ -72,7 +73,8 @@ const char *ptrace_reg_name(int idx)
 
 	switch (idx) {
 	R(PSW_MASK); R(PSW_ADDR);
-	R(GPR0); R(GPR1);
+	R(GPR0);
+	case HOST_GPR0 + 1: return "GPR1";
 	case HOST_GPR0 + 2: return "GPR2";
 	case HOST_GPR0 + 3: return "GPR3";
 	case HOST_GPR0 + 4: return "GPR4";
@@ -85,6 +87,7 @@ const char *ptrace_reg_name(int idx)
 	case HOST_GPR0 + 11: return "GPR11";
 	case HOST_GPR0 + 12: return "GPR12";
 	case HOST_GPR0 + 13: return "GPR13";
+	case HOST_GPR0 + 14: return "GPR14";
 	R(SP);
 	R(ORIG_GPR2);
 	R(SYSCALLNO); R(ARG0); R(TLS);

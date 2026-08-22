@@ -8,8 +8,13 @@
 #include <linux/elf.h>
 #include <linux/regset.h>
 #include <linux/uaccess.h>
-#include <uapi/asm/ptrace.h>	/* PSW_MASK_USER, PSW_MASK_PSTATE */
-#include <asm/ptrace.h>
+/*
+ * PSW user-legal bits (uapi/asm/ptrace.h) — included directly here
+ * rather than via the uapi header, whose struct user_regs_struct
+ * collides with the backend-owned one in asm/ptrace.h.
+ */
+#define UM_S390_PSW_MASK_USER	_AC(0x0000FF0180000000, UL)
+#define UM_S390_PSW_MASK_PSTATE	_AC(0x0001000000000000, UL)
 
 unsigned long getreg(struct task_struct *child, int regno)
 {
@@ -25,10 +30,10 @@ int putreg(struct task_struct *child, int regno, unsigned long value)
 	 * defense-in-depth, as on arm64 for PSTATE.NZCV.
 	 */
 	if (regno / sizeof(long) == HOST_PSW_MASK)
-		value = (value & PSW_MASK_USER) |
-			PSW_MASK_PSTATE |
+		value = (value & UM_S390_PSW_MASK_USER) |
+			UM_S390_PSW_MASK_PSTATE |
 			(task_pt_regs(child)->regs.gp[HOST_PSW_MASK] &
-			 ~PSW_MASK_USER);
+			 ~UM_S390_PSW_MASK_USER);
 
 	task_pt_regs(child)->regs.gp[regno / sizeof(long)] = value;
 	return 0;

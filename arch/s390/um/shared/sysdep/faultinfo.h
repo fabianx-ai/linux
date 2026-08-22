@@ -17,7 +17,6 @@
 #ifndef __FAULTINFO_S390_H
 #define __FAULTINFO_S390_H
 
-#include <signal.h>
 
 struct faultinfo {
 	int error_code;		/* program interruption code (masked) */
