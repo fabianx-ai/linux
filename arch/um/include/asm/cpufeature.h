@@ -6,6 +6,7 @@
 
 #if defined(__KERNEL__) && !defined(__ASSEMBLER__)
 
+#include <asm/cpufeaturemasks.h>
 #include <asm/asm.h>
 #include <linux/bitops.h>
 
@@ -47,7 +48,8 @@ extern const char * const x86_bug_flags[NBUGINTS*32];
  * supporting a possible guest feature where host support for it
  * is not relevant.
  */
-#define cpu_feature_enabled(bit)	_static_cpu_has(bit)
+#define cpu_feature_enabled(bit)	\
+	(__builtin_constant_p(bit) && DISABLED_MASK_BIT_SET(bit) ? 0 : _static_cpu_has(bit))
 
 #define boot_cpu_has(bit)	cpu_has(&boot_cpu_data, bit)
 
