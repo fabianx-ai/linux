@@ -18,7 +18,6 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-#include <asm/ldt.h>
 #include <asm/unistd.h>
 #include <init.h>
 #include <os.h>
@@ -232,10 +231,6 @@ static void __init check_ptrace(void)
 	os_info("OK\n");
 	check_sysemu();
 }
-
-extern unsigned long host_fp_size;
-extern unsigned long exec_regs[MAX_REG_NR];
-extern unsigned long *exec_fp_regs;
 
 __initdata static struct stub_data *seccomp_test_stub_data;
 

@@ -1552,6 +1552,25 @@ static kprobe_opcode_t *kprobe_addr(struct kprobe *p)
 }
 
 /*
+ * kprobe_on_func_entry() -- check whether given address is function entry
+ * (defined outside CONFIG_KRETPROBES: trace_kprobe event creation calls
+ * this for plain kprobes too)
+ */
+int kprobe_on_func_entry(kprobe_opcode_t *addr, const char *sym, unsigned long offset)
+{
+	bool on_func_entry;
+	kprobe_opcode_t *kp_addr = _kprobe_addr(addr, sym, offset, &on_func_entry);
+
+	if (IS_ERR(kp_addr))
+		return PTR_ERR(kp_addr);
+
+	if (!on_func_entry)
+		return -EINVAL;
+
+	return 0;
+}
+
+/*
  * Check the 'p' is valid and return the aggregator kprobe
  * at the same address.
  */
@@ -2235,20 +2254,6 @@ NOKPROBE_SYMBOL(kretprobe_rethook_handler);
  * Caller must pass @addr or @sym (either one must be NULL), or this
  * returns -EINVAL.
  */
-int kprobe_on_func_entry(kprobe_opcode_t *addr, const char *sym, unsigned long offset)
-{
-	bool on_func_entry;
-	kprobe_opcode_t *kp_addr = _kprobe_addr(addr, sym, offset, &on_func_entry);
-
-	if (IS_ERR(kp_addr))
-		return PTR_ERR(kp_addr);
-
-	if (!on_func_entry)
-		return -EINVAL;
-
-	return 0;
-}
-
 int register_kretprobe(struct kretprobe *rp)
 {
 	int ret;
