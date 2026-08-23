@@ -90,7 +90,10 @@ int get_stub_state(struct uml_pt_regs *regs, struct stub_data *data,
 	 * Verified trap-surviving via NT_PRSTATUS and mcontext (F-s1);
 	 * no stub-carried channel exists or is needed.
 	 */
-	regs->gp[HOST_TLS] = upt_acrs_tls(regs->gp);
+	/* The mcontext has no orig_gpr2; at a SIGSYS relay the syscall
+	 * has NOT run, so trap-time r2 *is* arg1. Without this,
+	 * UPT_SYSCALL_ARG1 reads a stale slot. */
+	regs->gp[HOST_ORIG_GPR2] = regs->gp[HOST_GPR0 + 2];
 	regs->gp[HOST_ARG0] = regs->gp[HOST_ORIG_GPR2];
 	/* int_code mirror: glibc does not carry it in mcontext_t; the
 	 * syscall number reaches us through si_syscall at the caller. */

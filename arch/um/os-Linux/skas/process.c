@@ -364,6 +364,9 @@ static int userspace_tramp(void *data)
 
 	/* Write init_data and close write side */
 	ret = write(tramp_data->sockpair[1], &init_data, sizeof(init_data));
+	os_info("TEMP tramp write=%ld sizeof=%zu first8=%llx",
+		(long)ret, sizeof(init_data),
+		*(unsigned long *)&init_data.seccomp); /* TEMP */
 	close(tramp_data->sockpair[1]);
 
 	if (ret != sizeof(init_data))
@@ -519,6 +522,8 @@ int start_userspace(struct mm_id *mm_id)
 		       __func__, errno);
 		goto out_close;
 	}
+	os_info("TEMP start_userspace clone pid=%d seccomp=%d", /* TEMP */
+		mm_id->pid, using_seccomp);
 
 	if (using_seccomp) {
 		wait_stub_done_seccomp(mm_id, 1, 1);
@@ -699,12 +704,27 @@ void userspace(struct uml_pt_regs *regs)
 
 			regs->is_user = 1;
 
-			/* Fill in ORIG_RAX and extract fault information */
+			/* Fill in the syscall number and fault info.
+			 * GET_FAULTINFO_FROM_MC zeroes its fields (the
+			 * s390 signal frame carries no TEID); the real
+			 * data sits in the relayed siginfo: si_addr is
+			 * host-computed from the TEID, and si_code
+			 * reflects it — ACCERR = store to a protected
+			 * page (native treats protection ⇒ write,
+			 * arch/s390/mm/fault.c:284-292), MAPERR =
+			 * unmapped. Classify accordingly so
+			 * handle_page_fault issues the right
+			 * FAULT_FLAG_WRITE — a misclassified COW or
+			 * stack-growth store livelocks. */
 			PT_SYSCALL_NR(regs->gp) = si->si_syscall;
 			if (sig == SIGSEGV) {
 				mcontext_t *mcontext = (void *)&proc_data->sigstack[proc_data->mctx_offset];
 
 				GET_FAULTINFO_FROM_MC(regs->faultinfo, mcontext);
+				regs->faultinfo.addr = (unsigned long)si->si_addr;
+				regs->faultinfo.error_code =
+					(si->si_code == SEGV_ACCERR) ? 0x04 : 0x11;
+				regs->faultinfo.trap_no = regs->faultinfo.error_code;
 			}
 		} else {
 			int pid = mm_id->pid;

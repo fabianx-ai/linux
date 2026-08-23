@@ -127,7 +127,11 @@ static irqreturn_t mm_sigchld_irq(int irq, void* dev)
 		list_for_each_entry(mm_context, &mm_list, list) {
 			if (mm_context->id.pid == pid) {
 				struct stub_data *stub_data;
-				printk("Unexpectedly lost MM child! Affected tasks will segfault.");
+				stub_data = (void *)mm_context->id.stack;
+				printk("Unexpectedly lost MM child! pid=%d err=%ld sig=%d len=%d",
+				       (int)pid, stub_data->err,
+				       stub_data->signal,
+				       stub_data->syscall_data_len);
 
 				/* Marks the MM as dead */
 				mm_context->id.pid = -1;

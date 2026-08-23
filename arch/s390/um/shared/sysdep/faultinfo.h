@@ -27,12 +27,14 @@ struct faultinfo {
 #define INIT_FAULTINFO { 0, 0, 0 }
 
 /*
- * Write-fault detection without a usable TEID: no reliable bit exists
- * in what reaches us. Default to read (0) — stack-grow/COW paths are
- * re-driven by handle_mm_fault anyway; a false "write" would break
- * read faults, a false "read" only costs an extra retry round-trip.
+ * Write-fault detection: the relayed si_code distinguishes store-to-
+ * protected (ACCERR → classified 0x04; native s390 treats protection
+ * ⇒ write, arch/s390/mm/fault.c:284-292) from unmapped (MAPERR →
+ * 0x11, read). The seccomp-path fill in os-Linux/skas/process.c
+ * encodes exactly that.
  */
-#define FAULT_WRITE(fi) (0)
+#define HAVE_RELIABLE_FAULT_WRITE 1
+#define FAULT_WRITE(fi) ((fi).error_code == 0x04)
 #define FAULT_ADDRESS(fi) ((fi).addr)
 
 /* Page-fault family: protection (0x04) and dat-exceptions

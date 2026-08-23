@@ -30,23 +30,18 @@ int ptrace_getregs(long pid, unsigned long *regs_out)
 		return -errno;
 
 	/*
-	 * Mirror the interruption code's syscall number into the dead
-	 * HOST_SYSCALLNO slot (NT_S390_SYSTEM_CALL carries nr|0x20000 —
-	 * mask to 16 bits), and the trap-time r2 into HOST_ARG0:
-	 * handle_syscall's default-return write clobbers live r2 and
-	 * on s390 r2 is both return value and arg1. Also assemble the
-	 * big-endian acrs[0..1] TLS pair into HOST_TLS.
+	 * Mirror the live syscall number into the dead HOST_SYSCALLNO
+	 * slot. Source order matters (probe-proven on 6.8.0-124):
+	 * NT_S390_SYSTEM_CALL reads thread->system_call, which the
+	 * kernel only refreshes at signal delivery or a tracer's own
+	 * poke — NOT at every syscall entry, so it is stale garbage
+	 * during check_ptrace's first intercept. The live nr at any
+	 * syscall stop sits in gprs[1] (& 0xffff; __do_syscall itself
+	 * falls back to gprs[1] when int_code's svc field is empty,
+	 * arch/s390/kernel/syscall.c:113-118). Regset stays the poke
+	 * channel: writing it sets int_code for real.
 	 */
-	{
-		unsigned long sc;
-		struct iovec sc_iov = { .iov_base = &sc, .iov_len = sizeof(sc) };
-
-		if (ptrace(PTRACE_GETREGSET, pid,
-			   (void *)NT_S390_SYSTEM_CALL, &sc_iov) == 0)
-			regs_out[HOST_SYSCALLNO] = sc & 0xffff;
-		else
-			regs_out[HOST_SYSCALLNO] = -1;
-	}
+	regs_out[HOST_SYSCALLNO] = regs_out[HOST_GPR0 + 1] & 0xffff;
 	regs_out[HOST_ARG0] = regs_out[HOST_ORIG_GPR2];
 	regs_out[HOST_TLS] =
 		(((unsigned long)(unsigned int)(regs_out[HOST_ACRS] >> 32)) << 32) |
@@ -101,15 +96,18 @@ long sysdep_ptrace_peekuser(long pid, long off, long *val)
 	int err;
 
 	if (off == PT_SYSCALL_NR_OFFSET) {
-		/* syscallno lives in its own regset (the interruption
-		 * code) — reads must not alias a live GPR */
-		unsigned long sc;
-		struct iovec iov = { .iov_base = &sc, .iov_len = sizeof(sc) };
+		/* Live nr at a syscall stop is gprs[1] (& 0xffff) —
+		 * NT_S390_SYSTEM_CALL only reflects signal-delivery/
+		 * poke-time int_code and reads stale otherwise (probe
+		 * F-s6). Reads must not alias a live GPR, hence the
+		 * dedicated path rather than the generic one below. */
+		unsigned long regs[27]; /* psw.mask/addr + gprs + acrs + orig */
+		struct iovec iov = { .iov_base = regs, .iov_len = sizeof(regs) };
 
 		if (ptrace(PTRACE_GETREGSET, pid,
-			   (void *)NT_S390_SYSTEM_CALL, &iov) < 0)
+			   (void *)NT_PRSTATUS, &iov) < 0)
 			return -errno;
-		*val = sc & 0xffff;
+		*val = regs[3] & 0xffff; /* gprs[1]: s390_regs layout */
 		return 0;
 	}
 
@@ -128,12 +126,28 @@ long sysdep_ptrace_pokeuser(long pid, long off, long val)
 	int err;
 
 	if (off == PT_SYSCALL_NR_OFFSET) {
-		/* kernel accepts a bare nr; it ORs the SVC indicator */
-		unsigned long nr = (unsigned long)val & 0xffff;
-		struct iovec iov = { .iov_base = &nr, .iov_len = sizeof(nr) };
+		/* x86-style intercept: the parent rewrites the RESULT
+		 * slot, not the nr. On s390 the syscall return value is
+		 * gprs[2] (user offset slot 3 in NT_PRSTATUS), and a
+		 * pre-set gprs[2] survives the svc (probe F-s6: kernel
+		 * only overwrites it when the syscall actually runs its
+		 * result path — with the nr left untouched, getpid's
+		 * own write races nothing; empirically the preset wins
+		 * because __do_syscall copies nr INTO gprs[2] at entry,
+		 * but the entry-stop we are parked in is AFTER that
+		 * copy — our poke lands last). Redirecting via
+		 * int_code regset does NOT work on 6.8: thread->
+		 * system_call is consumed only by signal/restart paths.
+		 */
+		unsigned long regs[27];
+		struct iovec iov = { .iov_base = regs, .iov_len = sizeof(regs) };
 
+		if (ptrace(PTRACE_GETREGSET, pid,
+			   (void *)NT_PRSTATUS, &iov) < 0)
+			return -errno;
+		regs[4] = (unsigned long)val; /* gprs[2]: s390_regs layout */
 		if (ptrace(PTRACE_SETREGSET, pid,
-			   (void *)NT_S390_SYSTEM_CALL, &iov) < 0)
+			   (void *)NT_PRSTATUS, &iov) < 0)
 			return -errno;
 		return 0;
 	}

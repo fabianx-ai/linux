@@ -70,9 +70,16 @@ void os_kill_ptraced_process(int pid, int reap_child)
 pid_t os_reap_child(void)
 {
 	int status;
+	pid_t pid;
 
 	/* Try to reap a child */
-	return waitpid(-1, &status, WNOHANG);
+	pid = waitpid(-1, &status, WNOHANG);
+	if (pid > 0) /* TEMP */
+		os_info("TEMP reaped %d: exited=%d sig=%d code=%d",
+			pid, WIFEXITED(status), WIFSIGNALED(status),
+			WIFEXITED(status) ? WEXITSTATUS(status) :
+			WIFSIGNALED(status) ? WTERMSIG(status) : -1);
+	return pid;
 }
 
 /* Don't use the glibc version, which caches the result in TLS. It misses some
