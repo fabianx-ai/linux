@@ -87,10 +87,17 @@ static __always_inline long stub_syscall##n(long nr			\
 	STUB_SYSCALL_REGS_##n;						\
 	__asm__ volatile ("svc 0"					\
 		: "+d" (r2)						\
-		: "d" (r1)						\
+		: "d" (r1) STUB_SYSCALL_INPUTS_##n			\
 		: __syscall_clobber);					\
 	return r2;							\
 }
+
+#define STUB_SYSCALL_INPUTS_1
+#define STUB_SYSCALL_INPUTS_2 , "d" (r3)
+#define STUB_SYSCALL_INPUTS_3 STUB_SYSCALL_INPUTS_2, "d" (r4)
+#define STUB_SYSCALL_INPUTS_4 STUB_SYSCALL_INPUTS_3, "d" (r5)
+#define STUB_SYSCALL_INPUTS_5 STUB_SYSCALL_INPUTS_4, "d" (r6)
+#define STUB_SYSCALL_INPUTS_6 STUB_SYSCALL_INPUTS_5, "d" (r7)
 
 
 #define STUB_SYSCALL_PARM_1 , long arg1
@@ -129,8 +136,11 @@ static __always_inline void trap_myself(void)
 }
 
 /*
- * The stub data page sits directly above the stub code page; larl
- * yields page-aligned PC, add one page.
+ * The stub data region sits directly above the stub code page. larl
+ * loads the address of a label INSIDE this function — NOT page-aligned
+ * (the old +PAGE math silently produced a pointer 0x104..0xfff bytes
+ * into the sigstack, desynchronizing the stub/kernel futex handshake).
+ * Round the PC down to the page base first, then add one page.
  */
 static __always_inline void *get_stub_data(void)
 {
@@ -138,6 +148,7 @@ static __always_inline void *get_stub_data(void)
 
 	asm volatile (
 		"	larl	%0, 0f\n"
+		"	nilf	%0, 0xfffff000\n"
 		"0:	aghi	%0, %1\n"
 		: "=&d" (ret)
 		: "i" (UM_KERN_PAGE_SIZE)
@@ -155,31 +166,37 @@ static __always_inline void *get_stub_data(void)
 			"	j	4f\n"				\
 			"3:	brasl	%%r14, %1\n"			\
 			"4:\n"					\
-			:: "i" (STUB_SIZE), "i" (&fn)		\
-			: "r1", "r14", "memory");		\
+			:: "i" (-STUB_SIZE), "i" (&fn) : "r1", "r14", "memory");	\
 	} while (0)
 
 /*
- * Nothing to restore outside the mcontext: TLS/acrs ride the frame
- * (F-s1) — unlike x86 arch_prctl and arm64 TPIDR_EL0 msr.
+ * Host rt_sigreturn takes the frame from %r15 (arch/s390/kernel/
+ * signal.c sys_rt_sigreturn). The handler's siginfo pointer sits at
+ * frame+168: 160-byte callee area + u16 svc_insn, padded to siginfo's
+ * 8-byte alignment. Fixed ABI.
  */
-static __always_inline void
-stub_seccomp_restore_state(struct stub_data_arch *arch)
+static __always_inline void stub_signal_return(void *info)
 {
-}
+	unsigned long frame = (unsigned long)info - 168;
 
-/*
- * s390 returns from signal handlers through the SA_RESTORER
- * trampoline (stub_signal_restorer, in the stub page), so the
- * rt_sigreturn svc executes from the stub page and passes the
- * seccomp filter's IP check. Nothing to do here.
- */
-static __always_inline void stub_signal_return(void *frame)
-{
+	asm volatile (
+		"	lgr	%%r15, %0\n"
+		"	larl	%%r1, stub_signal_restorer\n"
+		"	br	%%r1\n"
+		:: "d" (frame) : "r1", "memory");
+	__builtin_unreachable();
 }
 
 /* Nothing to save: everything visible to the kernel via regsets. */
 static __always_inline void stub_seccomp_save_state(struct stub_data_arch *arch)
+{
+}
+
+/*
+ * Nothing to restore outside the mcontext: TLS/acrs ride the frame
+ * (F-s1) — unlike x86 arch_prctl and arm64 TPIDR_EL0.
+ */
+static __always_inline void stub_seccomp_restore_state(struct stub_data_arch *arch)
 {
 }
 

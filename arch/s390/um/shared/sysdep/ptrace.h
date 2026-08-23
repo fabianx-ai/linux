@@ -95,9 +95,14 @@ struct uml_pt_regs {
 
 extern int arch_init_registers(int pid);
 
-/* Initial stack pointer for a new thread: s390x requires 8-byte
- * alignment only, but keep 16 like the other backends for safety. */
+/* Initial stack pointer for a new thread. The s390x ELF ABI gives the
+ * callee a 160-byte register-save area ABOVE its entry SP (the prologue
+ * `stmg %r14,%r15,112(%r15)` runs BEFORE the stack decrement, storing
+ * into the caller-provided area). At thread birth there is no caller,
+ * so the initial SP must reserve that headroom below the stack top or
+ * the first stmg writes past the allocation (SIGILL/SIGSEGV at
+ * UM_THREAD_START_SP+112 — box-proven). 16-byte aligned like siblings. */
 #define UM_THREAD_START_SP(stack) \
-	(((unsigned long)(stack) + UM_THREAD_SIZE - sizeof(void *)) & ~15UL)
+	(((unsigned long)(stack) + UM_THREAD_SIZE - 176) & ~15UL)
 
 #endif /* __SYSDEP_S390_PTRACE_H */

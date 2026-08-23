@@ -46,12 +46,14 @@ unsigned long get_thread_reg(int reg, jmp_buf *buf)
 {
 	switch (reg) {
 	case HOST_PSW_ADDR:
+		return buf[0]->__r14;		/* IP lives in r14 slot */
 	case HOST_SP:
 		return buf[0]->__r15;
 	default:
 		return 0;
 	}
 }
+
 
 int arch_init_registers(int pid)
 {
