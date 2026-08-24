@@ -188,7 +188,7 @@ restart_wait:
 
 		/* We should never have a receive error (other than -EAGAIN) */
 		if (res < 0 && res != -EAGAIN)
-			stub_syscall1(__NR_exit_group, 1);
+			stub_syscall1(__NR_exit_group, 2);
 
 		/* Receive the FDs */
 		num_fds = 0;
@@ -213,6 +213,7 @@ restart_wait:
 
 		goto restart_wait;
 	}
+
 
 	/* Restore arch dependent state that is not part of the mcontext */
 	stub_seccomp_restore_state(&d->arch_data);
