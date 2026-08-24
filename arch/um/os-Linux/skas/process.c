@@ -185,8 +185,6 @@ int s390_mediate_stops(struct mm_id *mm_idp)
 
 		CATCH_EINTR(n = waitpid(mm_idp->pid, &status,
 					WNOHANG | WUNTRACED | __WALL));
-		printk(UM_KERN_INFO "TEMP drain n=%d status=%x\n", /* TEMP */
-		       n, status);
 		if (n <= 0)
 			return 0;
 
@@ -213,8 +211,6 @@ int s390_mediate_stops(struct mm_id *mm_idp)
 				       __func__, errno);
 				return 1;
 			}
-			printk(UM_KERN_INFO "TEMP mediate sig=%d orig_gpr2=%lx psw=%lx\n", /* TEMP */
-			       sig, regs[26], regs[1]);
 			data->relay_arg1 = regs[26]; /* orig_gpr2 */
 			data->arg1_valid = 1;
 		}
@@ -541,9 +537,6 @@ static int userspace_tramp(void *data)
 
 	/* Write init_data and close write side */
 	ret = write(tramp_data->sockpair[1], &init_data, sizeof(init_data));
-	os_info("TEMP tramp write=%ld sizeof=%zu first8=%llx",
-		(long)ret, sizeof(init_data),
-		*(unsigned long *)&init_data.seccomp); /* TEMP */
 	close(tramp_data->sockpair[1]);
 
 	if (ret != sizeof(init_data))
@@ -565,9 +558,6 @@ static int userspace_tramp(void *data)
 				 : "+d"(r2)
 				 : "d"(r1), "d"(r3), "d"(r4), "d"(r5), "d"(r6)
 				 : "memory", "cc");
-		if (r2)
-			os_info("TEMP execveat failed r=%ld errno=%d fd=%d",
-				r2, errno, stub_exe_fd);
 	}
 
 	exit(5);
@@ -718,8 +708,6 @@ int start_userspace(struct mm_id *mm_id)
 		goto out_close;
 	}
 
-	os_info("TEMP start_userspace clone pid=%d seccomp=%d", /* TEMP */
-		mm_id->pid, using_seccomp);
 
 #ifdef CONFIG_UML_S390
 	/*
@@ -940,12 +928,6 @@ void userspace(struct uml_pt_regs *regs)
 					(si->si_code == SEGV_ACCERR) ? 0x04 : 0x11;
 				regs->faultinfo.trap_no = regs->faultinfo.error_code;
 			}
-			if (sig != SIGSYS && sig != SIGSEGV &&
-			    sig != SIGALRM && sig != SIGTRAP)
-				printk(UM_KERN_INFO /* TEMP */
-				       "TEMP relay sig=%d ip=%lx addr=%lx code=%d\n",
-				       sig, regs->gp[HOST_PSW_ADDR],
-				       (unsigned long)si->si_addr, si->si_code);
 		} else {
 			int pid = mm_id->pid;
 

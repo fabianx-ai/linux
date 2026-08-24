@@ -50,13 +50,15 @@ static noinline void __attribute__((used)) real_init(void)
 					    (unsigned long)(buf + got),
 					    sizeof(init_data) - got);
 			if ((long)res <= 0)
-				break; /* TEMP: capture res below */
+				break;
 			got += res;
 		}
 		if (got != sizeof(init_data)) {
-			long r2 = (long)res; /* TEMP */
-			int code = 100 + (int)(((r2 < 0 ? -r2 : r2) | got) & 0x3f);
-			stub_syscall1(__NR_exit, code); /* TEMP */
+			/* Encode read errno/short-read in the exit code
+			 * for post-mortem via the stub-death path. */
+			int code = 100 + (int)(((res < 0 ? -res : res) |
+						got) & 0x3f);
+			stub_syscall1(__NR_exit, code);
 		}
 	}
 

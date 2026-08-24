@@ -345,8 +345,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 		goto out;
 	}
 	else if (current->mm == NULL) {
-		os_info("TEMP no-mm fault: addr=0x%lx ip=0x%lx start_vm=0x%lx end_vm=0x%lx high=0x%lx",
-			address, ip, start_vm, end_vm, high_physmem);
 		show_regs(container_of(regs, struct pt_regs, regs));
 		panic("Segfault with no mm: addr 0x%lx, ip 0x%lx, %s",
 			      address, ip, is_write ? "write" : "read");
@@ -360,8 +358,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 	if (SEGV_IS_FIXABLE(&fi)) {
 		err = handle_page_fault(address, ip, is_write, is_user,
 					&si_code);
-		os_info("TEMP fault addr=0x%lx ip=0x%lx write=%d user=%d err=%d code=%d", /* TEMP */
-			address, ip, is_write, is_user, err, si_code);
 	}
 	else {
 		err = -EFAULT;
