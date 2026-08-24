@@ -103,18 +103,19 @@ int get_stub_state(struct uml_pt_regs *regs, struct stub_data *data,
 	 * signals) never have it set: leave ORIG_GPR2 as-is.
 	 */
 	if (data->arg1_valid) {
+		printk(UM_KERN_INFO "TEMP consume arg1=%lx\n", /* TEMP */
+		       data->relay_arg1);
 		regs->gp[HOST_ORIG_GPR2] = data->relay_arg1;
-		regs->gp[HOST_ARG0] = data->relay_arg1;
-		data->arg1_valid = 0;
-
 		/*
-		 * On s390 the svc interruption old-PSW points AT the svc
-		 * instruction (probe: delta=0). After a completed relay
-		 * the sigreturn must resume AFTER it, or the same svc
-		 * retraps forever. x86 needs no such skip (syscall leaves
-		 * ip after the insn).
+		 * NOTE: no PSW advance here. The seccomp rollback
+		 * (arch/s390/kernel/syscall.c) already leaves the
+		 * interrupted PSW AFTER the svc — box-proven twice:
+		 * the exit(30) handshake stop showed psw=svc+2 and the
+		 * guest brk stop showed psw=svc+2; adding 2 more
+		 * resumed the guest mid-instruction (SIGILL at
+		 * ld.so's brk return point). F-s6's "delta=0" measured
+		 * the pre-rollback frame, not the delivery stop.
 		 */
-		regs->gp[HOST_PSW_ADDR] += 2; /* svc is 2 bytes */
 	}
 	/* int_code mirror: glibc does not carry it in mcontext_t; the
 	 * syscall number reaches us through si_syscall at the caller. */

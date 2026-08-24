@@ -222,30 +222,29 @@ static noinline void __attribute__((used)) real_init(void)
 			.filter = filter,
 		};
 
+#ifdef CONFIG_UML_S390
+	/*
+	 * Become traced by the parent BEFORE the filter goes live: any
+	 * syscall issued after the filter (including this one, from the
+	 * stub_exe mapping outside the stub IP window) traps and is
+	 * RELAYED to UML, which would execute ptrace(TRACEME) on
+	 * ITSELF and hand us a meaningless 0 (box-proven: TracerPid
+	 * stayed 0 while the relay worked). Pre-filter, the svc runs
+	 * for real and the tracer sees every SIGSYS delivery-stop.
+	 */
+	{
+		long tr = stub_syscall4(__NR_ptrace,
+					0 /* PTRACE_TRACEME */,
+					0, 0, 0);
+		if (tr != 0)
+			stub_syscall2(__NR_exit_group, 90 + tr, 0);
+	}
+#endif
+
 		if (stub_syscall3(__NR_seccomp, SECCOMP_SET_MODE_FILTER,
 				  SECCOMP_FILTER_FLAG_TSYNC,
 				  (unsigned long)&prog) != 0)
 			stub_syscall1(__NR_exit, 21);
-
-#ifdef CONFIG_UML_S390
-		/*
-		 * Become traced by the parent BEFORE the first relay:
-		 * the tracer must see every signal-delivery-stop to
-		 * capture orig_gpr2 (the true arg1) at the SIGSYS stop
-		 * and reinject it — that only works once current->ptrace
-		 * is set, and the parent resumes from CLONE_VFORK
-		 * concurrently with this code racing toward exit(30).
-		 * PTRACE_TRACEME (request 0) is unconditional and
-		 * race-free — no futex handshake required.
-		 */
-		{
-			long tr = stub_syscall4(__NR_ptrace,
-						0 /* PTRACE_TRACEME */,
-						0, 0, 0);
-			if (tr != 0)
-				stub_syscall2(__NR_exit_group, 90 + tr, 0);
-		}
-#endif
 
 		/* Fall through: the exit syscall hits the filter and
 		 * raises SIGSYS, entering stub_signal_interrupt — the
