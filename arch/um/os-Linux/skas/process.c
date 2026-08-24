@@ -203,20 +203,22 @@ void s390_reap_stub_trap(struct mm_id *mm_idp)
 			       __func__, n, errno, status);
 			fatal_sigsegv();
 		}
+
 		int sig = WSTOPSIG(status);
 		int event = status >> 16;
 
-		if (sig == SIGTRAP && !event) {
-			/* the relay breakpoint: done */
-			break;
+		if (sig == SIGTRAP && event == 0)
+			break; /* the relay breakpoint */
+
+		if (sig == SIGSTOP || sig == SIGTSTP ||
+		    sig == SIGTTIN || sig == SIGTTOU) {
+			printk(UM_KERN_ERR "%s : group-stop sig=%d\n",
+			       __func__, sig);
+			ptrace(PTRACE_CONT, mm_idp->pid, 0, 0);
+			continue;
 		}
 
-		/*
-		 * Anything else (signal-delivery stop for SIGALRM/
-		 * SIGWINCH/SIGIO, or a group-stop): re-inject the signal
-		 * so the stub handles it as appropriate, then keep
-		 * waiting for the relay trap.
-		 */
+		/* other signal-delivery stop: deliver and keep waiting */
 		ptrace(PTRACE_CONT, mm_idp->pid, 0, sig);
 	}
 
