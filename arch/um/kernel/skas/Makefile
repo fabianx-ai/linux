@@ -40,6 +40,17 @@ targets += stub_exe.dbg stub_exe $(stub_exe_objs-y)
 CFLAGS_stub.o := $(CFLAGS_NO_HARDENING)
 CFLAGS_stub_exe.o := $(CFLAGS_NO_HARDENING)
 
+#
+# The stub TUs compile WITHOUT kernel config headers (no autoconf),
+# so CONFIG_UML_S390 never reaches them through normal means; pass
+# it explicitly. On cross builds the target's multiarch libc headers
+# must also win over the build seat's own /usr/include, else every
+# syscall number resolves to the x86_64 table.
+ifeq ($(CONFIG_UML_S390),y)
+CFLAGS_stub.o += -DCONFIG_UML_S390 $(USER_CFLAGS_S390_ISYSTEM)
+CFLAGS_stub_exe.o += -DCONFIG_UML_S390 $(USER_CFLAGS_S390_ISYSTEM)
+endif
+
 # Clang will call memset() from __builtin_alloca() when stack variable
 # initialization is enabled, which is used in stub_exe.c.
 CFLAGS_stub_exe.o += $(call cc-option, -ftrivial-auto-var-init=uninitialized)

@@ -19,7 +19,10 @@ ELF_ARCH	:= s390
 ELF_FORMAT	:= elf64-s390
 CHECKFLAGS	+= -D__s390__ -D__s390x__
 
-# s390 has no arm64-style kapi generated headers consumed by UML
-# (arch/s390/tools generates facility/opcode tables only used by the
-# native disassembler) and the syscall headers come from the core's
-# asm-generic archheaders pass. Nothing to run here.
+# Cross builds from a non-s390 seat: the extracted cross gcc lacks
+# the multiarch system-include glue, so <sys/ucontext.h> and
+# <asm/unistd.h> in %_user.o objects resolve to the build seat's
+# x86_64 headers (wrong layout AND wrong syscall numbers). -isystem
+# puts the target's multiarch libc headers ahead of the host ones.
+# Kernel objects are unaffected (different flags variable).
+

@@ -17,6 +17,7 @@ extern void get_mc_from_regs(struct uml_pt_regs *regs, mcontext_t *mc,
 
 extern int get_stub_state(struct uml_pt_regs *regs, struct stub_data *data,
 			  unsigned long *fp_size_out);
+void get_stub_state_arg1(struct stub_data *data, unsigned long arg1);
 extern int set_stub_state(struct uml_pt_regs *regs, struct stub_data *data,
 			  int single_stepping);
 

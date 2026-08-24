@@ -65,6 +65,19 @@ struct stub_data {
 	int signal;
 	unsigned short si_offset;
 	unsigned short mctx_offset;
+	/*
+	 * s390x hybrid relay: the handler raises a breakpoint at
+	 * restart_wait (both fresh signals and syscall-flush restarts
+	 * pass through it) with tracer_ready set. The kernel-side
+	 * tracer reaps that stop, captures orig_gpr2 — the true arg1,
+	 * since the SIGSYS mcontext only carries r2 = -ENOSYS on s390
+	 * (arch/s390/kernel/syscall.c:134) — into relay_arg1 and sets
+	 * arg1_valid for the next get_stub_state(). Zero-initialized
+	 * fields are ignored on x86 and arm64.
+	 */
+	int tracer_ready;
+	int arg1_valid;
+	unsigned long relay_arg1;
 
 	/* seccomp architecture specific state restore */
 	struct stub_data_arch arch_data;

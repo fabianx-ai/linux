@@ -187,17 +187,17 @@ noinline static void real_init(void)
 			/* Load syscall number */
 			BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
 				 offsetof(struct seccomp_data, nr)),
-
 			/* Permitted syscalls */
-			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_futex, 6, 0),
-			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_recvmsg, 5, 0),
-			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_close, 4, 0),
-			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, STUB_MMAP_NR, 3, 0),
-			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_munmap, 2, 0),
-			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_rt_sigreturn, 1, 0),
+			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_futex, 7, 0),
+			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_recvmsg, 6, 0),
+			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_close, 5, 0),
+			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, STUB_MMAP_NR, 4, 0),
+			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_munmap, 3, 0),
+			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 173 /* rt_sigreturn */, 2, 0),
+#ifdef CONFIG_UML_S390
+			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_ptrace /* TRACEME before first relay */, 1, 0),
+#endif
 
-			/* Not permitted: kill */
-			BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
 
 			BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
 		};
@@ -211,13 +211,35 @@ noinline static void real_init(void)
 				  (unsigned long)&prog) != 0)
 			stub_syscall1(__NR_exit, 21);
 
-		/* Fall through, the exit syscall will cause SIGSYS */
+#ifdef CONFIG_UML_S390
+		/*
+		 * Become traced by the parent BEFORE the first relay:
+		 * trap_myself() only produces a catchable SIGTRAP once
+		 * current->ptrace is set, and the parent resumes from
+		 * CLONE_VFORK concurrently with this code racing toward
+		 * exit(30). PTRACE_TRACEME (request 0) is unconditional
+		 * and race-free — no futex handshake required.
+		 */
+		{
+			long tr = stub_syscall4(__NR_ptrace,
+						0 /* PTRACE_TRACEME */,
+						0, 0, 0);
+			if (tr != 0)
+				stub_syscall2(__NR_exit_group, 90 + tr, 0);
+		}
+#endif
+
+		/* Fall through: the exit syscall hits the filter and
+		 * raises SIGSYS, entering stub_signal_interrupt — the
+		 * first relay round. */
 	} else {
 		stub_syscall4(__NR_ptrace, PTRACE_TRACEME, 0, 0, 0);
 
 		stub_syscall2(__NR_kill, stub_syscall0(__NR_getpid), SIGSTOP);
 	}
 
+	/* In seccomp mode NOTREACHED (the filtered exit above raised
+	 * SIGSYS); ptrace mode stops here after its SIGSTOP. */
 	stub_syscall1(__NR_exit, 30);
 
 	__builtin_unreachable();

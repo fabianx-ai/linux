@@ -12,7 +12,72 @@
 #define __SYSDEP_STUB_H
 
 #include <stddef.h>
-#include <asm/unistd.h>
+/* The stub TUs compile on the BUILD seat (x86_64) with host libc
+ * headers, so <asm/unistd.h> would give the x86_64 table — wrong for
+ * every number the s390x kernel dispatches on. Override ALL numbers
+ * referenced by the stub/user TUs with their s390x values (uapi
+ * asm/unistd_64.h). Any new syscall added to stub code MUST be
+ * listed here. */
+#undef __NR_exit
+#undef __NR_exit_group
+#define __NR_exit_group 248
+#define __NR_exit 1
+#undef __NR_read
+#define __NR_read 3
+#undef __NR_write
+#define __NR_write 4
+#undef __NR_close
+#define __NR_close 6
+#undef __NR_fcntl
+#define __NR_fcntl 55
+#undef __NR_sigaltstack
+#define __NR_sigaltstack 186
+#undef __NR_kill
+#define __NR_kill 37
+#undef __NR_rename
+#define __NR_rename 38
+#undef __NR_mkdir
+#define __NR_mkdir 39
+#undef __NR_rmdir
+#define __NR_rmdir 40
+#undef __NR_dup
+#define __NR_dup 41
+#undef __NR_pipe
+#define __NR_pipe 42
+#undef __NR_times
+#define __NR_times 43
+#undef __NR_getppid
+#define __NR_getppid 64
+#undef __NR_pread64
+#define __NR_pread64 180
+#undef __NR_futex
+#define __NR_futex 238
+#undef __NR_clock_nanosleep
+#define __NR_clock_nanosleep 262
+#undef __NR_prctl
+#define __NR_prctl 172
+#undef __NR_rt_sigaction
+#define __NR_rt_sigaction 174
+#undef __NR_rt_sigprocmask
+#define __NR_rt_sigprocmask 175
+#undef __NR_rt_sigreturn
+#define __NR_rt_sigreturn 173
+#undef __NR_seccomp
+#define __NR_seccomp 348
+#undef __NR_execveat
+#define __NR_execveat 354
+#undef __NR_mmap
+#define __NR_mmap 90
+#undef __NR_munmap
+#define __NR_munmap 91
+#undef __NR_recvmsg
+#define __NR_recvmsg 372
+#undef __NR_close_range
+#define __NR_close_range 436
+#undef __NR_ptrace
+#define __NR_ptrace 26
+#undef __NR_getpid
+#define __NR_getpid 20
 #include <sys/mman.h>
 #include <as-layout.h>
 #include <stub-data.h>
@@ -129,10 +194,12 @@ STUB_SYSCALL(6)
 
 static __always_inline void trap_myself(void)
 {
-	/* Two illegal halfwords: s390 instruction-length code makes
-	 * this a guaranteed SIGILL with ILC=4 — the tracer's trap-back
-	 * notifier (no brk equivalent at EL0 without PER). */
-	__asm__ (".short 0xffff\n.short 0xffff");
+	/* s390 breakpoint opcode 0x0001: native illegal_op converts it
+	 * to SIGTRAP/TRAP_BRKPT iff current->ptrace, else SIGILL
+	 * (arch/s390/kernel/traps.c:151, uapi/asm/ptrace.h:307). One
+	 * halfword; ILC=2. The kernel-side tracer reaps this stop after
+	 * the futex handshake confirms the handler recorded its state. */
+	__asm__ (".short 0x0001");
 }
 
 /*

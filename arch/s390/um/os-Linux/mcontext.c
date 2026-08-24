@@ -6,6 +6,7 @@
  * channel. No record walk exists on s390 to mis-parse.
  */
 #include <linux/errno.h>
+#include <signal.h>
 #include <linux/string.h>
 #include <sys/ucontext.h>
 #include <asm/ptrace.h>
@@ -86,15 +87,28 @@ int get_stub_state(struct uml_pt_regs *regs, struct stub_data *data,
 	memcpy(&regs->fp, &mcontext->fpregs, UM_S390_FP_SIZE);
 
 	/*
-	 * TLS round trip from the frame: acrs[0..1] big-endian hi/lo.
-	 * Verified trap-surviving via NT_PRSTATUS and mcontext (F-s1);
-	 * no stub-carried channel exists or is needed.
+	 * The mcontext has no orig_gpr2 and the host kernel clobbers
+	 * gprs[2] to -ENOSYS after seccomp's rollback
+	 * (arch/s390/kernel/syscall.c:134), so the signal frame can
+	 * never carry arg1 on s390. The tracer-side reaper stashed the
+	 * true arg1 (orig_gpr2 at the relay breakpoint) in stub_data;
+	 * consume it here. Non-SIGSYS rounds (faults, async signals)
+	 * have no syscall context: leave ORIG_GPR2 as-is.
 	 */
-	/* The mcontext has no orig_gpr2; at a SIGSYS relay the syscall
-	 * has NOT run, so trap-time r2 *is* arg1. Without this,
-	 * UPT_SYSCALL_ARG1 reads a stale slot. */
-	regs->gp[HOST_ORIG_GPR2] = regs->gp[HOST_GPR0 + 2];
-	regs->gp[HOST_ARG0] = regs->gp[HOST_ORIG_GPR2];
+	if (data->signal == SIGSYS && data->arg1_valid) {
+		regs->gp[HOST_ORIG_GPR2] = data->relay_arg1;
+		regs->gp[HOST_ARG0] = data->relay_arg1;
+		data->arg1_valid = 0;
+
+		/*
+		 * On s390 the svc interruption old-PSW points AT the svc
+		 * instruction (probe: delta=0). After a completed relay
+		 * the sigreturn must resume AFTER it, or the same svc
+		 * retraps forever. x86 needs no such skip (syscall leaves
+		 * ip after the insn).
+		 */
+		regs->gp[HOST_PSW_ADDR] += 2; /* svc is 2 bytes */
+	}
 	/* int_code mirror: glibc does not carry it in mcontext_t; the
 	 * syscall number reaches us through si_syscall at the caller. */
 
