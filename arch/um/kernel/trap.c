@@ -360,6 +360,8 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 	if (SEGV_IS_FIXABLE(&fi)) {
 		err = handle_page_fault(address, ip, is_write, is_user,
 					&si_code);
+		os_info("TEMP fault addr=0x%lx ip=0x%lx write=%d user=%d err=%d code=%d", /* TEMP */
+			address, ip, is_write, is_user, err, si_code);
 	}
 	else {
 		err = -EFAULT;

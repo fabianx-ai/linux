@@ -150,92 +150,81 @@ static bool stub_is_dead(int pid)
  * The plain SIGSYS/mcontext route cannot deliver arg1 on s390: the
  * host kernel's __do_syscall sets regs->gprs[2] = -ENOSYS AFTER
  * seccomp's syscall_rollback (arch/s390/kernel/syscall.c:134), so the
- * signal frame always shows r2 = -ENOSYS (uniform 0xffffffffffffffda
- * observed on every relayed guest syscall, boot t8). The truth is kept
- * in pt_regs.orig_gpr2, which NT_PRSTATUS exposes at a ptrace stop
- * (probe-proven layout, FINDINGS F-s1).
+ * signal frame always shows r2 = -ENOSYS. The truth is kept in
+ * pt_regs.orig_gpr2, which NT_PRSTATUS exposes — but only at the
+ * SIGSYS signal-delivery-stop itself. Every syscall rewrites
+ * orig_gpr2 with its own r2, so by any later stop (e.g. a breakpoint
+ * at the end of the handler) the field already holds the address of
+ * stub_data->futex, not arg1 (box probe, 2026-08-24).
  *
- * So the stub handler records its siginfo/mcontext offsets and wakes
- * the futex as before, then executes the s390 breakpoint opcode
- * 0x0001 (trap_myself). Native illegal_op converts exactly that
- * opcode to SIGTRAP iff the task is ptraced (traps.c:151) — hence we
- * SEIZE the stub at startup. On each relay round the tracer reaps the
- * SIGTRAP stop, copies orig_gpr2 into gprs[2] of the SHARED mcontext
- * in stub_data (the page both sides map), PTRACE_CONTs, and the
- * normal get_stub_state() consumer reads a correct arg1. Genuine
- * faults keep flowing through the same handler without a tracer round
- * trip beyond one CONT each.
+ * A traced task parks in signal-delivery-stop BEFORE its handler runs
+ * and waits for the tracer to reinject the signal. So the tracer
+ * (this process, via the stub's TRACEME in real_init) captures
+ * orig_gpr2 at exactly that stop, stashes it in stub_data, and
+ * reinjects; all other stops are reinjected as-is so the stub's own
+ * handlers run unchanged. No breakpoint opcode, no end-of-handler
+ * parking round trip.
+ *
+ * Mediation is event-driven: a ptrace stop SIGCHLDs the tracer, which
+ * interrupts our futex_wait below (probe: EINTR after ~80us); this
+ * drain is non-blocking and runs on every wakeup plus on the
+ * bounded-wait timeout as backstop. Returns nonzero if the stub died.
  */
-static int s390_stub_tracer_attach(struct mm_id *mm_idp)
-{
-	int err;
-
-	err = ptrace(PTRACE_SEIZE, mm_idp->pid, 0, 0);
-	if (err) {
-		printk(UM_KERN_ERR "%s : PTRACE_SEIZE %d failed, errno = %d\n",
-		       __func__, mm_idp->pid, errno);
-		return -errno;
-	}
-	mm_idp->traced = true;
-	return 0;
-}
-
-/*
- * Called after wait_stub_done_seccomp() confirmed data->futex ==
- * FUTEX_IN_KERN with tracer_ready set: reap the breakpoint SIGTRAP,
- * patch arg1 into the shared mcontext, resume the handler. Must run
- * while we still own the mm turnstile.
- */
-void s390_reap_stub_trap(struct mm_id *mm_idp)
+int s390_mediate_stops(struct mm_id *mm_idp)
 {
 	struct stub_data *data = (void *)mm_idp->stack;
-	unsigned long regs[27]; /* psw.mask/addr + 16 gprs + 8 acrs + orig */
-	struct iovec iov = { .iov_base = regs, .iov_len = sizeof(regs) };
-	int status, n;
 
-	if (!mm_idp->traced)
-		return;
 	for (;;) {
+		unsigned long regs[27]; /* psw.mask/addr+16 gprs+8 acrs+orig */
+		struct iovec iov = {
+			.iov_base = regs,
+			.iov_len = sizeof(regs),
+		};
+		int status = 0, sig, n;
+
 		CATCH_EINTR(n = waitpid(mm_idp->pid, &status,
-					WUNTRACED | __WALL));
-		if (n < 0 || !WIFSTOPPED(status)) {
-			printk(UM_KERN_ERR "%s : waitpid failed, n=%d errno=%d status=%#x\n",
-			       __func__, n, errno, status);
-			fatal_sigsegv();
+					WNOHANG | WUNTRACED | __WALL));
+		if (n <= 0)
+			return 0;
+
+		if (!WIFSTOPPED(status)) {
+			printk(UM_KERN_ERR "%s : stub %d died: %s %d\n",
+			       __func__, mm_idp->pid,
+			       WIFEXITED(status) ? "exit" : "killed by",
+			       WIFEXITED(status) ? WEXITSTATUS(status) :
+						   WTERMSIG(status));
+			return 1;
 		}
 
-		int sig = WSTOPSIG(status);
-		int event = status >> 16;
+		sig = WSTOPSIG(status);
 
-		if (sig == SIGTRAP && event == 0)
-			break; /* the relay breakpoint */
+		/*
+		 * Capture arg1 while pt_regs is still pristine, then
+		 * let the handler run. get_stub_state() consumes and
+		 * clears arg1_valid when it applies the value.
+		 */
+		if (sig == SIGSYS) {
+			if (ptrace(PTRACE_GETREGSET, mm_idp->pid,
+				   (void *)NT_PRSTATUS, &iov)) {
+				printk(UM_KERN_ERR "%s : GETREGSET failed, errno = %d\n",
+				       __func__, errno);
+				return 1;
+			}
+			data->relay_arg1 = regs[26]; /* orig_gpr2 */
+			data->arg1_valid = 1;
+		}
 
 		if (sig == SIGSTOP || sig == SIGTSTP ||
 		    sig == SIGTTIN || sig == SIGTTOU) {
-			printk(UM_KERN_ERR "%s : group-stop sig=%d\n",
-			       __func__, sig);
 			ptrace(PTRACE_CONT, mm_idp->pid, 0, 0);
 			continue;
 		}
 
-		/* other signal-delivery stop: deliver and keep waiting */
-		ptrace(PTRACE_CONT, mm_idp->pid, 0, sig);
-	}
-
-	if (ptrace(PTRACE_GETREGSET, mm_idp->pid,
-		   (void *)NT_PRSTATUS, &iov)) {
-		printk(UM_KERN_ERR "%s : GETREGSET failed, errno = %d\n",
-		       __func__, errno);
-		fatal_sigsegv();
-	}
-
-	data->relay_arg1 = regs[26];
-	data->arg1_valid = 1;
-
-	if (ptrace(PTRACE_CONT, mm_idp->pid, 0, 0)) {
-		printk(UM_KERN_ERR "%s : CONT failed, errno = %d\n",
-		       __func__, errno);
-		fatal_sigsegv();
+		if (ptrace(PTRACE_CONT, mm_idp->pid, 0, sig)) {
+			printk(UM_KERN_ERR "%s : CONT failed, errno = %d\n",
+			       __func__, errno);
+			return 1;
+		}
 	}
 }
 
@@ -248,26 +237,29 @@ void s390_stub_tracer_detach(struct mm_id *mm_idp)
 }
 #endif
 
-void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
+/*
+ * wait_stub_done_seccomp - drive one stub handshake round
+ * Returns the signal the stub reported (sampled while it is safely
+ * parked), or -1 if the stub died / the wait failed.
+ */
+int wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 {
 	struct stub_data *data = (void *)mm_idp->stack;
 	int ret;
+	int seen_signal = -1;
 
 	do {
 #ifdef CONFIG_UML_S390
 		/*
-		 * Hybrid relay, reaper at the TOP of every round: the
-		 * stub's trap_myself() sits BEFORE its futex dance, so a
-		 * trap can park the handler while we sleep in our own
-		 * futex_wait — its pending SIGTRAP stop must be consumed
-		 * here (whenever tracer_ready says one is armed), not
-		 * only after this round completes. Covers both orders.
+		 * Drain any stops that arrived between rounds (e.g.
+		 * the timer tick parking the stub right after we
+		 * finished processing the previous one). Non-blocking;
+		 * also the only mediation before the very first wake.
 		 */
-		if (data->tracer_ready) {
-			data->tracer_ready = 0;
-			s390_reap_stub_trap(mm_idp);
-		}
+		if (s390_mediate_stops(mm_idp))
+			goto out_kill;
 #endif
+
 
 		const char byte = 0;
 		struct iovec iov = {
@@ -301,16 +293,39 @@ void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 				CATCH_EINTR(syscall(__NR_sendmsg, mm_idp->sock,
 						&msgh, 0));
 			}
-
-			data->signal = 0;
+			/*
+			 * No data->signal clear here: with the s390
+			 * tracer the handler may be running right now
+			 * (the drain reinjected its stop this round)
+			 * and would race our clear. Sample it only
+			 * after the handshake below, when the handler
+			 * is provably parked.
+			 */
 			data->futex = FUTEX_IN_CHILD;
 			CATCH_EINTR(syscall(__NR_futex, &data->futex,
 					    FUTEX_WAKE, 1, NULL, NULL, 0));
 		}
 
 		do {
+#ifdef CONFIG_UML_S390
+			/*
+			 * Bounded short wait: a traced stub parks in
+			 * signal-delivery-stop BEFORE it can reach its
+			 * own futex handshake, and UML cannot rely on
+			 * SIGCHLD interrupting this sleep (signals may
+			 * be masked here). Every timeout is a chance
+			 * for the drain below to mediate pending
+			 * stops; healthy rounds still complete in
+			 * microseconds because the reinjected handler
+			 * wakes us directly.
+			 */
+			struct timespec ts = { .tv_sec = 0,
+					       .tv_nsec = 10 * 1000000 };
+#else
 			struct timespec ts = { .tv_sec = 5 };
+#endif
 			int pid;
+			int ferr;
 
 			/*
 			 * We need to check whether the child is still alive
@@ -330,7 +345,30 @@ void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 			ret = syscall(__NR_futex, &data->futex,
 				      FUTEX_WAIT, FUTEX_IN_CHILD,
 				      &ts, NULL, 0);
-			if (ret < 0 && errno == ETIMEDOUT) {
+			/*
+			 * Save errno NOW: the s390 drain below runs
+			 * waitpid/ptrace and would clobber it before
+			 * the classification below.
+			 */
+			ferr = ret < 0 ? errno : 0;
+#ifdef CONFIG_UML_S390
+			/*
+			 * A ptrace stop SIGCHLDs us out of the wait
+			 * (EINTR ~80us after the stop, probe-proven).
+			 * Drain and mediate whatever parked the stub:
+			 * SIGSYS stops get their orig_gpr2 captured
+			 * here, then every stop is reinjected so the
+			 * stub handler proceeds to its own futex
+			 * handshake. This replaces both the old
+			 * flag-gated reaper (the flag lived in the
+			 * handler, which cannot run while parked) and
+			 * the EINTR blind-retry that reset the 5s
+			 * timer on every tick and never timed out.
+			 */
+			if (s390_mediate_stops(mm_idp))
+				goto out_kill;
+#endif
+			if (ret < 0 && ferr == ETIMEDOUT) {
 				/*
 				 * Bounded-wait backstop: on !SMP the
 				 * futex wake in mm_sigchld_irq() is
@@ -348,20 +386,11 @@ void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 					       __func__, pid);
 					goto out_kill;
 				}
-				/*
-				 * Alive but slow — OR parked at the relay
-				 * breakpoint (trap sits before its futex
-				 * wake). Reap if armed, then keep waiting.
-				 */
-				if (data->tracer_ready) {
-					data->tracer_ready = 0;
-					s390_reap_stub_trap(mm_idp);
-				}
 				continue;
 			}
-			if (ret < 0 && errno != EINTR && errno != EAGAIN) {
+			if (ret < 0 && ferr != EINTR && ferr != EAGAIN) {
 				printk(UM_KERN_ERR "%s : FUTEX_WAIT failed, errno = %d\n",
-				       __func__, errno);
+				       __func__, ferr);
 				goto out_kill;
 			}
 		} while (data->futex == FUTEX_IN_CHILD);
@@ -371,8 +400,17 @@ void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 
 		running = 0;
 
+		/*
+		 * The handler is parked in its futex_wait now: every
+		 * field it wrote (signal, offsets) is stable. Sample
+		 * and clear the reported signal here — not before the
+		 * wake, where a tracer-injected handler could race us.
+		 */
+		seen_signal = data->signal;
+		data->signal = 0;
+
 		/* We may receive a SIGALRM before SIGSYS, iterate again. */
-	} while (wait_sigsys && data->signal == SIGALRM);
+	} while (wait_sigsys && seen_signal == SIGALRM);
 
 	/*
 	 * Both halves matter. The subtraction underflows when a signal frame is
@@ -388,14 +426,13 @@ void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 		printk(UM_KERN_ERR "%s : invalid mcontext offset", __func__);
 		goto out_kill;
 	}
-
-	if (wait_sigsys && data->signal != SIGSYS) {
+	if (wait_sigsys && seen_signal != SIGSYS) {
 		printk(UM_KERN_ERR "%s : expected SIGSYS but got %d",
-		       __func__, data->signal);
+		       __func__, seen_signal);
 		goto out_kill;
 	}
 
-	return;
+	return seen_signal;
 
 out_kill:
 	printk(UM_KERN_ERR "%s : failed to wait for stub, pid = %d, errno = %d\n",
@@ -403,6 +440,7 @@ out_kill:
 	/* This is not true inside start_userspace */
 	if (current_mm_id() == mm_idp)
 		fatal_sigsegv();
+	return -1;
 }
 
 extern unsigned long current_stub_stack(void);
@@ -680,17 +718,18 @@ int start_userspace(struct mm_id *mm_id)
 
 #ifdef CONFIG_UML_S390
 	/*
-	 * Hybrid relay: the stub itself issued PTRACE_TRACEME toward its
-	 * real parent (us) inside real_init(), before the first relay
-	 * round — tracer attachment is race-free by construction, so
-	 * there is nothing to do here. Mark it traced for the reaper;
-	 * TRACESYSGOOD is irrelevant in seccomp mode (no syscall stops).
+	 * Hybrid relay: the stub issued PTRACE_TRACEME toward its real
+	 * parent (us) inside real_init() before its first relay round —
+	 * tracer attachment is race-free by construction, so there is
+	 * nothing to attach here. Mark it traced for the detach path;
+	 * stop mediation happens event-driven in wait_stub_done_seccomp.
 	 */
 	mm_id->traced = 1;
 #endif
 
 	if (using_seccomp) {
-		wait_stub_done_seccomp(mm_id, 1, 1);
+		if (wait_stub_done_seccomp(mm_id, 1, 1) < 0)
+			goto out_kill;
 	} else {
 		do {
 			CATCH_EINTR(n = waitpid(mm_id->pid, &status,
@@ -833,13 +872,9 @@ void userspace(struct uml_pt_regs *regs)
 			/* Must have been reset by the syscall caller */
 			if (proc_data->restart_wait != 0)
 				panic("Programming error: Flag to only run syscalls in child was not cleared!");
-
-			/* Mark pending syscalls for flushing */
-			proc_data->syscall_data_len = mm_id->syscall_data_len;
-
-			wait_stub_done_seccomp(mm_id, 0, 0);
-
-			sig = proc_data->signal;
+			sig = wait_stub_done_seccomp(mm_id, 0, 0);
+			if (sig < 0)
+				fatal_sigsegv();
 
 			if (sig == SIGTRAP && proc_data->err != 0) {
 				printk(UM_KERN_ERR "%s - Error flushing stub syscalls",
