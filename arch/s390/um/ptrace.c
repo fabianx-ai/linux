@@ -156,13 +156,60 @@ int poke_user(struct task_struct *child, long addr, long data)
 
 /*
  * Backend ptrace dispatch: everything not covered by the generic
- * regset path. NT_S390_SYSTEM_CALL-equivalent requests are handled
- * through the general frame here; no extra regsets in v0.
+ * regset path. The 0x5000-area requests are the primary register
+ * channel for native s390 gdb/strace; implement them over the
+ * existing peek_user/poke_user word loop (uapi struct ptrace_area /
+ * request numbers are re-declared locally: including the uapi
+ * ptrace.h here collides with the backend-owned struct
+ * user_regs_struct in asm/ptrace.h).
  */
+struct um_ptrace_area {
+	unsigned int len;
+	unsigned long kernel_addr;
+	unsigned long process_addr;
+};
+
+#define UM_PTRACE_PEEKUSR_AREA 0x5000
+#define UM_PTRACE_POKEUSR_AREA 0x5001
+
 long subarch_ptrace(struct task_struct *child, long request,
 		    unsigned long addr, unsigned long data)
 {
-	return -EIO;
+	struct um_ptrace_area parea;
+	unsigned long src, dst, copied;
+	long ret;
+
+	switch (request) {
+	case UM_PTRACE_PEEKUSR_AREA:
+	case UM_PTRACE_POKEUSR_AREA:
+		if (copy_from_user(&parea, (void __user *)addr,
+				   sizeof(parea)))
+			return -EFAULT;
+		if (!parea.len || (parea.len & (sizeof(long) - 1)))
+			return -EIO;
+		src = parea.kernel_addr;
+		dst = parea.process_addr;
+		for (copied = 0; copied < parea.len;
+		     copied += sizeof(unsigned long)) {
+			if (request == UM_PTRACE_PEEKUSR_AREA) {
+				ret = peek_user(child, src, dst);
+			} else {
+				unsigned long utmp;
+
+				if (get_user(utmp,
+					     (unsigned long __user *)dst))
+					return -EFAULT;
+				ret = poke_user(child, src, utmp);
+			}
+			if (ret)
+				return ret;
+			src += sizeof(unsigned long);
+			dst += sizeof(unsigned long);
+		}
+		return 0;
+	default:
+		return -EIO;
+	}
 }
 
 /* s390 has no host-ISA instructions UML emulates on SIGILL. */

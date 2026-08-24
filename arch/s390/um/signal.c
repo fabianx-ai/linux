@@ -133,14 +133,29 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 	if (__save_altstack(&frame->uc_stack, PT_REGS_SP(regs)))
 		return 1;
 
+	/* Stack backchain at frame[0] (native setup_rt_frame writes the
+	 * interrupted r15 there; unwinders walk it). callee_used_stack
+	 * is scratch, so this does not collide with the trampoline. */
+	if (__put_user(PT_REGS_SP(regs),
+		       (unsigned long __user *)&frame->callee_used_stack[0]))
+		return 1;
+
 	PT_REGS_SP(regs) = (unsigned long)frame;
 	PT_REGS_IP(regs) = (unsigned long)ksig->ka.sa.sa_handler;
 	ur->gp[HOST_GPR0 + 2] = sig;			/* arg1 = signo */
 	ur->gp[HOST_GPR0 + 3] = (unsigned long)&frame->info;
 	ur->gp[HOST_GPR0 + 4] =
 		(unsigned long)&frame->uc_flags;
-	/* s390 delivers the restorer in gpr14 (native setup_rt_frame) */
-	ur->gp[HOST_GPR0 + 14] = um_vdso_sigreturn;
+	/* s390 delivers the restorer in gpr14: the guest's own
+	 * SA_RESTORER if it set one (CRIU, sanitizers), else the vDSO
+	 * sigreturn trampoline. Native additionally sets gpr5 to the
+	 * breaking-event address; UML does not track last_break, so
+	 * gpr5 keeps the interrupted value. */
+	if (ksig->ka.sa.sa_flags & SA_RESTORER)
+		ur->gp[HOST_GPR0 + 14] =
+			(unsigned long)ksig->ka.sa.sa_restorer;
+	else
+		ur->gp[HOST_GPR0 + 14] = um_vdso_sigreturn;
 	return 0;
 }
 

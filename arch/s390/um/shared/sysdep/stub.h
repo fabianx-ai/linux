@@ -224,17 +224,20 @@ static __always_inline void *get_stub_data(void)
 	return (void *)ret;
 }
 
-#define stub_start(fn)							\
-	do {								\
-		asm volatile (						\
-			"	aghi	%%r15, %0\n"			\
-			"	larl	%%r1, 3f\n"			\
-			"	basr	%%r14, %%r1\n"			\
-			"	j	4f\n"				\
-			"3:	brasl	%%r14, %1\n"			\
-			"4:\n"					\
-			:: "i" (-STUB_SIZE), "i" (&fn) : "r1", "r14", "memory");	\
-	} while (0)
+/*
+ * Entry instructions of the stub_exe binary, emitted from file-scope
+ * asm in stub_exe.c: move the stack pointer down past the future stub
+ * mappings, then branch to real_init() (which never returns).
+ */
+#define STUB_EXE_START							\
+	".text\n"							\
+	".align 8\n"							\
+	".globl _start\n"						\
+	".type _start,@function\n"					\
+	"_start:\n"							\
+	"	aghi	%r15, -" __stringify(STUB_SIZE) "\n"		\
+	"	brasl	%r14, real_init\n"				\
+	"	j	.\n"
 
 /*
  * Host rt_sigreturn takes the frame from %r15 (arch/s390/kernel/

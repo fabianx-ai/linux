@@ -17,13 +17,22 @@
 __wsum csum_partial(const void *buff, int len, __wsum sum)
 {
 	const u16 *buf = (const u16 *)buff;
+	u64 acc = (__force u32)sum;
 
+	/*
+	 * Accumulate into 64 bits and fold once at the end: a u32
+	 * accumulator drops end-around carries on large buffers or
+	 * large incoming partial sums (NFS/iSCSI sizes).
+	 */
 	while (len > 1) {
-		sum += *buf++;
+		acc += *buf++;
 		len -= 2;
 	}
 	if (len == 1)
-		sum += (__force __wsum)((u32)(*(const u8 *)buf) << 8); /* BE */
+		acc += (u64)(*(const u8 *)buf) << 8; /* BE */
+	acc = (acc >> 32) + (u32)acc;
+	acc += acc >> 32;
+	sum = (__force __wsum)(u32)acc;
 	sum = (__force __wsum)(((__force u32)sum >> 16) +
 			       ((__force u32)sum & 0xffff));
 	if ((__force u32)sum > 0xffff)

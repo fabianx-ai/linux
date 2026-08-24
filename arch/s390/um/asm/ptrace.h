@@ -43,6 +43,15 @@ struct user_fpregs_struct {
 
 #include <asm/ptrace-generic.h>
 
+/*
+ * Host-lane PER single-stepping dies at the host sigreturn in
+ * seccomp mode (the host merge drops the PER bit); arch_ptrace must
+ * refuse PTRACE_SINGLESTEP rather than fake syscall-granularity
+ * steps via the syscall-leave trap. Breakpoints via the 0x5000-area
+ * requests still work.
+ */
+#define SUBARCH_SINGLESTEP_UNSUPPORTED
+
 #define user_mode(r) UPT_IS_USER(&(r)->regs)
 
 /*

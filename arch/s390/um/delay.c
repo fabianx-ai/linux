@@ -19,12 +19,12 @@ EXPORT_SYMBOL(__delay);
 
 inline void __const_udelay(unsigned long xloops)
 {
-	__delay((xloops * loops_per_jiffy) >> 32);
+	__delay(((xloops * HZ * loops_per_jiffy) >> 32) + 1);
 }
 EXPORT_SYMBOL(__const_udelay);
 
 void __udelay(unsigned long usecs)
 {
-	__const_udelay(usecs * NSEC_PER_USEC);
+	__const_udelay(usecs * 0x10c7UL); /* 2**32 / 1000000 (rounded up) */
 }
 EXPORT_SYMBOL(__udelay);
