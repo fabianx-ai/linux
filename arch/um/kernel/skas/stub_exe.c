@@ -8,9 +8,7 @@
 #include <linux/seccomp.h>
 #include <generated/asm-offsets.h>
 
-void _start(void);
-
-noinline static void real_init(void)
+noinline void real_init(void)
 {
 	struct stub_init_data init_data;
 	unsigned long res;
@@ -259,17 +257,25 @@ noinline static void real_init(void)
 	__builtin_unreachable();
 }
 
-__attribute__((naked)) void _start(void)
-{
-	/*
-	 * Since the stack after exec() starts at the top-most address,
-	 * but that's exactly where we also want to map the stub data
-	 * and code, this must:
-	 *  - push the stack by 1 code and STUB_DATA_PAGES data pages
-	 *  - call real_init()
-	 * This way, real_init() can use the stack normally, while the
-	 * original stack further down (higher address) will become
-	 * inaccessible after the mmap() calls above.
-	 */
-	stub_start(real_init);
-}
+/*
+ * Real asm entry point. GCC ignores __attribute__((naked)) on s390
+ * and would emit an FPR-save prologue that merely happens not to
+ * touch memory — luck, not ABI. The stack after exec() starts at the
+ * top-most address, which is exactly where the stub code+data get
+ * mapped: _start moves the stack down by STUB_SIZE and calls
+ * real_init(), which then uses the stack normally while the original
+ * stack further up becomes inaccessible after the mmap() calls.
+ */
+#define UM_STR_(x) #x
+#define UM_STR(x) UM_STR_(x)
+asm(
+	".text\n"
+	".align 8\n"
+	".globl _start\n"
+	".type _start,@function\n"
+	"_start:\n"
+	"	aghi	%r15, -" UM_STR(STUB_SIZE) "\n"
+	"	brasl	%r14, real_init\n"
+	"	j	.\n"
+);
+

@@ -9,6 +9,16 @@
 #ifndef __UM_S390_SIGNAL_H
 #define __UM_S390_SIGNAL_H
 
+/*
+ * Guests may install their own sigreturn restorer (SA_RESTORER, same
+ * flag value as native s390). Defining this before asm-generic makes
+ * struct sigaction carry sa_restorer and the generic sys_rt_sigaction
+ * copy it through; setup_signal_stack_si picks it over the vDSO
+ * trampoline.
+ */
+#define __ARCH_HAS_SA_RESTORER
+#define SA_RESTORER 0x04000000
+
 #include <asm-generic/signal.h>
 #include <uapi/asm/siginfo.h>
 
