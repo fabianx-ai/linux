@@ -25,4 +25,4 @@ CHECKFLAGS	+= -D__s390__ -D__s390x__
 # x86_64 headers (wrong layout AND wrong syscall numbers). -isystem
 # puts the target's multiarch libc headers ahead of the host ones.
 # Kernel objects are unaffected (different flags variable).
-
+USER_CFLAGS += -isystem /usr/s390x-linux-gnu/include
