@@ -103,8 +103,6 @@ int get_stub_state(struct uml_pt_regs *regs, struct stub_data *data,
 	 * signals) never have it set: leave ORIG_GPR2 as-is.
 	 */
 	if (data->arg1_valid) {
-		printk(UM_KERN_INFO "TEMP consume arg1=%lx\n", /* TEMP */
-		       data->relay_arg1);
 		regs->gp[HOST_ORIG_GPR2] = data->relay_arg1;
 		/*
 		 * NOTE: no PSW advance here. The seccomp rollback

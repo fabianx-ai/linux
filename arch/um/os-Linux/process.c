@@ -87,11 +87,6 @@ pid_t os_reap_child(void)
 
 	/* Try to reap a child */
 	pid = waitpid(-1, &status, WNOHANG);
-	if (pid > 0) /* TEMP */
-		os_info("TEMP reaped %d: exited=%d sig=%d code=%d",
-			pid, WIFEXITED(status), WIFSIGNALED(status),
-			WIFEXITED(status) ? WEXITSTATUS(status) :
-			WIFSIGNALED(status) ? WTERMSIG(status) : -1);
 	return pid;
 }
 
