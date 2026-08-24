@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <string.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <mem_user.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -174,6 +175,8 @@ int s390_mediate_stops(struct mm_id *mm_idp)
 
 		CATCH_EINTR(n = waitpid(mm_idp->pid, &status,
 					WNOHANG | WUNTRACED | __WALL));
+		printk(UM_KERN_INFO "TEMP drain n=%d status=%x\n", /* TEMP */
+		       n, status);
 		if (n <= 0)
 			return 0;
 
@@ -200,6 +203,8 @@ int s390_mediate_stops(struct mm_id *mm_idp)
 				       __func__, errno);
 				return 1;
 			}
+			printk(UM_KERN_INFO "TEMP mediate sig=%d orig_gpr2=%lx psw=%lx\n", /* TEMP */
+			       sig, regs[26], regs[1]);
 			data->relay_arg1 = regs[26]; /* orig_gpr2 */
 			data->arg1_valid = 1;
 		}
@@ -694,10 +699,16 @@ int start_userspace(struct mm_id *mm_id)
 	 */
 	mm_id->traced = 1;
 #endif
-
 	if (using_seccomp) {
 		if (wait_stub_done_seccomp(mm_id, 1, 1) < 0)
 			goto out_kill;
+		/*
+		 * The handshake round's capture belongs to the tramp's
+		 * discarded exit(30), not to any guest round. Drop it
+		 * before the first userspace() iteration, or its
+		 * arg1/PSW+2 fixup would corrupt the first fault round.
+		 */
+		proc_data->arg1_valid = 0;
 	} else {
 		do {
 			CATCH_EINTR(n = waitpid(mm_id->pid, &status,
@@ -814,6 +825,10 @@ void userspace(struct uml_pt_regs *regs)
 			/* Must have been reset by the syscall caller */
 			if (proc_data->restart_wait != 0)
 				panic("Programming error: Flag to only run syscalls in child was not cleared!");
+
+			/* Mark pending syscalls for flushing */
+			proc_data->syscall_data_len = mm_id->syscall_data_len;
+
 			sig = wait_stub_done_seccomp(mm_id, 0, 0);
 			if (sig < 0)
 				fatal_sigsegv();
@@ -867,6 +882,12 @@ void userspace(struct uml_pt_regs *regs)
 					(si->si_code == SEGV_ACCERR) ? 0x04 : 0x11;
 				regs->faultinfo.trap_no = regs->faultinfo.error_code;
 			}
+			if (sig != SIGSYS && sig != SIGSEGV &&
+			    sig != SIGALRM && sig != SIGTRAP)
+				printk(UM_KERN_INFO /* TEMP */
+				       "TEMP relay sig=%d ip=%lx addr=%lx code=%d\n",
+				       sig, regs->gp[HOST_PSW_ADDR],
+				       (unsigned long)si->si_addr, si->si_code);
 		} else {
 			int pid = mm_id->pid;
 

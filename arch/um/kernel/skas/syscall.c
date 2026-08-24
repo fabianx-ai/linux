@@ -22,9 +22,11 @@ void handle_syscall(struct uml_pt_regs *r)
 	/* Initialize the syscall number and default return value. */
 	UPT_SYSCALL_NR(r) = PT_SYSCALL_NR(r->gp);
 	PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
-	pr_info("TEMP sc nr=%ld ip=%lx arg1=%lx\n", /* TEMP */
+	pr_info("TEMP sc nr=%ld ip=%lx args=%lx %lx %lx %lx %lx %lx\n", /* TEMP */
 		(long)UPT_SYSCALL_NR(r), UPT_IP(r),
-		UPT_SYSCALL_ARG1(r));
+		UPT_SYSCALL_ARG1(r), UPT_SYSCALL_ARG2(r),
+		UPT_SYSCALL_ARG3(r), UPT_SYSCALL_ARG4(r),
+		UPT_SYSCALL_ARG5(r), UPT_SYSCALL_ARG6(r));
 
 	if (syscall_trace_enter(regs))
 		goto out;
@@ -54,7 +56,8 @@ void handle_syscall(struct uml_pt_regs *r)
 						 UPT_SYSCALL_ARG4(&regs->regs),
 						 UPT_SYSCALL_ARG5(&regs->regs),
 						 UPT_SYSCALL_ARG6(&regs->regs));
-
+		pr_info("TEMP sc ret nr=%ld ret=%lx\n", /* TEMP */
+			(long)syscall, ret);
 		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
 
 		/*
