@@ -90,12 +90,19 @@ int get_stub_state(struct uml_pt_regs *regs, struct stub_data *data,
 	 * The mcontext has no orig_gpr2 and the host kernel clobbers
 	 * gprs[2] to -ENOSYS after seccomp's rollback
 	 * (arch/s390/kernel/syscall.c:134), so the signal frame can
-	 * never carry arg1 on s390. The tracer-side reaper stashed the
-	 * true arg1 (orig_gpr2 at the relay breakpoint) in stub_data;
-	 * consume it here. Non-SIGSYS rounds (faults, async signals)
-	 * have no syscall context: leave ORIG_GPR2 as-is.
+	 * never carry arg1 on s390. The tracer-side drain stashed the
+	 * true arg1 (orig_gpr2 at the SIGSYS delivery-stop) in
+	 * stub_data before reinjecting; consume it here.
+	 *
+	 * Keyed on arg1_valid alone: data->signal is set by the stub
+	 * handler concurrently with UML touching the page (the drain
+	 * injects during our round), so it is not a reliable marker.
+	 * arg1_valid is set strictly before that injection and
+	 * consumed exactly once per relayed syscall, so it cannot
+	 * alias across rounds. Non-SIGSYS rounds (faults, async
+	 * signals) never have it set: leave ORIG_GPR2 as-is.
 	 */
-	if (data->signal == SIGSYS && data->arg1_valid) {
+	if (data->arg1_valid) {
 		regs->gp[HOST_ORIG_GPR2] = data->relay_arg1;
 		regs->gp[HOST_ARG0] = data->relay_arg1;
 		data->arg1_valid = 0;

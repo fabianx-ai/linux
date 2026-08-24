@@ -187,7 +187,16 @@ noinline static void real_init(void)
 			/* Load syscall number */
 			BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
 				 offsetof(struct seccomp_data, nr)),
-			/* Permitted syscalls */
+			/*
+			 * Permitted syscalls (issued by the handler
+			 * inside the stub window). Each match jumps to
+			 * the final RET ALLOW; the implicit
+			 * fall-through of a non-match MUST hit the
+			 * RET TRAP below — without it every jump
+			 * target is out of range (EINVAL at install)
+			 * and unmatched in-window syscalls would be
+			 * silently allowed.
+			 */
 			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_futex, 7, 0),
 			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_recvmsg, 6, 0),
 			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_close, 5, 0),
@@ -197,7 +206,9 @@ noinline static void real_init(void)
 #ifdef CONFIG_UML_S390
 			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_ptrace /* TRACEME before first relay */, 1, 0),
 #endif
-
+			/* Non-allowlisted syscall from inside the
+			 * stub window: trap it like a guest syscall. */
+			BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP),
 
 			BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
 		};
@@ -214,11 +225,13 @@ noinline static void real_init(void)
 #ifdef CONFIG_UML_S390
 		/*
 		 * Become traced by the parent BEFORE the first relay:
-		 * trap_myself() only produces a catchable SIGTRAP once
-		 * current->ptrace is set, and the parent resumes from
-		 * CLONE_VFORK concurrently with this code racing toward
-		 * exit(30). PTRACE_TRACEME (request 0) is unconditional
-		 * and race-free — no futex handshake required.
+		 * the tracer must see every signal-delivery-stop to
+		 * capture orig_gpr2 (the true arg1) at the SIGSYS stop
+		 * and reinject it — that only works once current->ptrace
+		 * is set, and the parent resumes from CLONE_VFORK
+		 * concurrently with this code racing toward exit(30).
+		 * PTRACE_TRACEME (request 0) is unconditional and
+		 * race-free — no futex handshake required.
 		 */
 		{
 			long tr = stub_syscall4(__NR_ptrace,
