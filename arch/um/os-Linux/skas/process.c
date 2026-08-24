@@ -137,12 +137,136 @@ static bool stub_is_dead(int pid)
 	return res > 0 && (pfd.revents & POLLIN);
 }
 
+#ifdef CONFIG_UML_S390
+
+/* glibc <elf.h> and <linux/elf.h> cannot coexist in UML user objects;
+ * the constant is fixed ABI anyway. */
+#ifndef NT_PRSTATUS
+#define NT_PRSTATUS 1
+#endif
+/*
+ * s390x hybrid syscall relay.
+ *
+ * The plain SIGSYS/mcontext route cannot deliver arg1 on s390: the
+ * host kernel's __do_syscall sets regs->gprs[2] = -ENOSYS AFTER
+ * seccomp's syscall_rollback (arch/s390/kernel/syscall.c:134), so the
+ * signal frame always shows r2 = -ENOSYS (uniform 0xffffffffffffffda
+ * observed on every relayed guest syscall, boot t8). The truth is kept
+ * in pt_regs.orig_gpr2, which NT_PRSTATUS exposes at a ptrace stop
+ * (probe-proven layout, FINDINGS F-s1).
+ *
+ * So the stub handler records its siginfo/mcontext offsets and wakes
+ * the futex as before, then executes the s390 breakpoint opcode
+ * 0x0001 (trap_myself). Native illegal_op converts exactly that
+ * opcode to SIGTRAP iff the task is ptraced (traps.c:151) — hence we
+ * SEIZE the stub at startup. On each relay round the tracer reaps the
+ * SIGTRAP stop, copies orig_gpr2 into gprs[2] of the SHARED mcontext
+ * in stub_data (the page both sides map), PTRACE_CONTs, and the
+ * normal get_stub_state() consumer reads a correct arg1. Genuine
+ * faults keep flowing through the same handler without a tracer round
+ * trip beyond one CONT each.
+ */
+static int s390_stub_tracer_attach(struct mm_id *mm_idp)
+{
+	int err;
+
+	err = ptrace(PTRACE_SEIZE, mm_idp->pid, 0, 0);
+	if (err) {
+		printk(UM_KERN_ERR "%s : PTRACE_SEIZE %d failed, errno = %d\n",
+		       __func__, mm_idp->pid, errno);
+		return -errno;
+	}
+	mm_idp->traced = true;
+	return 0;
+}
+
+/*
+ * Called after wait_stub_done_seccomp() confirmed data->futex ==
+ * FUTEX_IN_KERN with tracer_ready set: reap the breakpoint SIGTRAP,
+ * patch arg1 into the shared mcontext, resume the handler. Must run
+ * while we still own the mm turnstile.
+ */
+void s390_reap_stub_trap(struct mm_id *mm_idp)
+{
+	struct stub_data *data = (void *)mm_idp->stack;
+	unsigned long regs[27]; /* psw.mask/addr + 16 gprs + 8 acrs + orig */
+	struct iovec iov = { .iov_base = regs, .iov_len = sizeof(regs) };
+	int status, n;
+
+	if (!mm_idp->traced)
+		return;
+	for (;;) {
+		CATCH_EINTR(n = waitpid(mm_idp->pid, &status,
+					WUNTRACED | __WALL));
+		if (n < 0 || !WIFSTOPPED(status)) {
+			printk(UM_KERN_ERR "%s : waitpid failed, n=%d errno=%d status=%#x\n",
+			       __func__, n, errno, status);
+			fatal_sigsegv();
+		}
+		int sig = WSTOPSIG(status);
+		int event = status >> 16;
+
+		if (sig == SIGTRAP && !event) {
+			/* the relay breakpoint: done */
+			break;
+		}
+
+		/*
+		 * Anything else (signal-delivery stop for SIGALRM/
+		 * SIGWINCH/SIGIO, or a group-stop): re-inject the signal
+		 * so the stub handles it as appropriate, then keep
+		 * waiting for the relay trap.
+		 */
+		ptrace(PTRACE_CONT, mm_idp->pid, 0, sig);
+	}
+
+	if (ptrace(PTRACE_GETREGSET, mm_idp->pid,
+		   (void *)NT_PRSTATUS, &iov)) {
+		printk(UM_KERN_ERR "%s : GETREGSET failed, errno = %d\n",
+		       __func__, errno);
+		fatal_sigsegv();
+	}
+
+	data->relay_arg1 = regs[26];
+	data->arg1_valid = 1;
+
+	if (ptrace(PTRACE_CONT, mm_idp->pid, 0, 0)) {
+		printk(UM_KERN_ERR "%s : CONT failed, errno = %d\n",
+		       __func__, errno);
+		fatal_sigsegv();
+	}
+}
+
+void s390_stub_tracer_detach(struct mm_id *mm_idp)
+{
+	if (!mm_idp->traced)
+		return;
+	mm_idp->traced = 0;
+	ptrace(PTRACE_DETACH, mm_idp->pid, 0, 0);
+}
+#endif
+
 void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 {
 	struct stub_data *data = (void *)mm_idp->stack;
 	int ret;
 
 	do {
+#ifdef CONFIG_UML_S390
+		/*
+		 * Hybrid relay, reaper at the TOP of every round: the
+		 * stub's trap_myself() sits BEFORE its futex dance, so a
+		 * trap can park the handler while we sleep in our own
+		 * futex_wait — its pending SIGTRAP stop must be consumed
+		 * here (whenever tracer_ready says one is armed), not
+		 * only after this round completes. Covers both orders.
+		 */
+		if (data->tracer_ready) {
+			data->tracer_ready = 0;
+			s390_reap_stub_trap(mm_idp);
+		}
+#endif
+
 		const char byte = 0;
 		struct iovec iov = {
 			.iov_base = (void *)&byte,
@@ -222,7 +346,15 @@ void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 					       __func__, pid);
 					goto out_kill;
 				}
-				/* Alive but slow to answer; keep waiting. */
+				/*
+				 * Alive but slow — OR parked at the relay
+				 * breakpoint (trap sits before its futex
+				 * wake). Reap if armed, then keep waiting.
+				 */
+				if (data->tracer_ready) {
+					data->tracer_ready = 0;
+					s390_reap_stub_trap(mm_idp);
+				}
 				continue;
 			}
 			if (ret < 0 && errno != EINTR && errno != EAGAIN) {
@@ -372,9 +504,26 @@ static int userspace_tramp(void *data)
 	if (ret != sizeof(init_data))
 		exit(4);
 
-	/* Raw execveat for compatibility with older libc versions */
-	syscall(__NR_execveat, stub_exe_fd, (unsigned long)"",
-		(unsigned long)argv, NULL, AT_EMPTY_PATH);
+	/* Raw execveat for compatibility with older libc versions.
+	 * NOTE: glibc's varargs syscall() mis-routes on this path (the
+	 * svc went out with the wrong nr and the kernel saw EINVAL), so
+	 * issue the svc by hand: nr in r1, args r2-r6. */
+	{
+		register long r2 __asm__("2") = stub_exe_fd;
+		register long r3 __asm__("3") = (unsigned long)"";
+		register long r4 __asm__("4") = (unsigned long)argv;
+		register long r5 __asm__("5") = 0;
+		register long r6 __asm__("6") = AT_EMPTY_PATH;
+		register long r1 __asm__("1") = 354; /* s390x execveat */
+
+		__asm__ volatile("svc 0"
+				 : "+d"(r2)
+				 : "d"(r1), "d"(r3), "d"(r4), "d"(r5), "d"(r6)
+				 : "memory", "cc");
+		if (r2)
+			os_info("TEMP execveat failed r=%ld errno=%d fd=%d",
+				r2, errno, stub_exe_fd);
+	}
 
 	exit(5);
 }
@@ -514,7 +663,8 @@ int start_userspace(struct mm_id *mm_id)
 		proc_data->futex = FUTEX_IN_CHILD;
 
 	mm_id->pid = clone(userspace_tramp, (void *) sp,
-		    CLONE_VFORK | CLONE_VM | SIGCHLD,
+		    CLONE_VFORK | CLONE_VM | 0x800000000ULL /* CLONE_NNP */ |
+		    SIGCHLD,
 		    (void *)&tramp_data);
 	if (mm_id->pid < 0) {
 		err = -errno;
@@ -522,8 +672,20 @@ int start_userspace(struct mm_id *mm_id)
 		       __func__, errno);
 		goto out_close;
 	}
+
 	os_info("TEMP start_userspace clone pid=%d seccomp=%d", /* TEMP */
 		mm_id->pid, using_seccomp);
+
+#ifdef CONFIG_UML_S390
+	/*
+	 * Hybrid relay: the stub itself issued PTRACE_TRACEME toward its
+	 * real parent (us) inside real_init(), before the first relay
+	 * round — tracer attachment is race-free by construction, so
+	 * there is nothing to do here. Mark it traced for the reaper;
+	 * TRACESYSGOOD is irrelevant in seccomp mode (no syscall stops).
+	 */
+	mm_id->traced = 1;
+#endif
 
 	if (using_seccomp) {
 		wait_stub_done_seccomp(mm_id, 1, 1);
@@ -554,7 +716,6 @@ int start_userspace(struct mm_id *mm_id)
 			goto out_kill;
 		}
 	}
-
 	if (munmap(stack, UM_KERN_PAGE_SIZE) < 0) {
 		err = -errno;
 		printk(UM_KERN_ERR "%s : munmap failed, errno = %d\n",
@@ -718,9 +879,10 @@ void userspace(struct uml_pt_regs *regs)
 			 * stack-growth store livelocks. */
 			PT_SYSCALL_NR(regs->gp) = si->si_syscall;
 			if (sig == SIGSEGV) {
-				mcontext_t *mcontext = (void *)&proc_data->sigstack[proc_data->mctx_offset];
-
-				GET_FAULTINFO_FROM_MC(regs->faultinfo, mcontext);
+				/* The s390 macro ignores its mcontext
+				 * argument; the real data lands in the
+				 * relayed siginfo below. */
+				GET_FAULTINFO_FROM_MC(regs->faultinfo, NULL);
 				regs->faultinfo.addr = (unsigned long)si->si_addr;
 				regs->faultinfo.error_code =
 					(si->si_code == SEGV_ACCERR) ? 0x04 : 0x11;
@@ -739,7 +901,6 @@ void userspace(struct uml_pt_regs *regs)
 					__func__, -err);
 				fatal_sigsegv();
 			}
-
 			/*
 			 * This can legitimately fail if the process loads a
 			 * bogus value into a segment register.  It will

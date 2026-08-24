@@ -116,10 +116,16 @@ stub_signal_interrupt(int sig, siginfo_t *info, void *p)
 	d->signal = sig;
 	d->si_offset = (unsigned long)info - (unsigned long)&d->sigstack[0];
 	d->mctx_offset = (unsigned long)&uc->uc_mcontext - (unsigned long)&d->sigstack[0];
-
-	/* Save arch state the kernel cannot observe (arm64: TPIDR_EL0) */
-	stub_seccomp_save_state(&d->arch_data);
-
+#ifdef CONFIG_UML_S390
+	/*
+	 * Hybrid relay: si/mctx offsets are recorded here; on s390 the
+	 * FINAL trap at the bottom of this handler parks us so the
+	 * tracer can read orig_gpr2 — the true arg1, since the SIGSYS
+	 * mcontext only carries r2 = -ENOSYS
+	 * (arch/s390/kernel/syscall.c:134).
+	 */
+	d->tracer_ready = 1;
+#endif
 restart_wait:
 	d->futex = FUTEX_IN_KERN;
 	do {
@@ -169,6 +175,19 @@ restart_wait:
 		goto restart_wait;
 	}
 
+#ifdef CONFIG_UML_S390
+	/*
+	 * Final relay trap for s390x: BEFORE returning to the guest,
+	 * park at the breakpoint so the tracer can read orig_gpr2 (the
+	 * true arg1 — the SIGSYS mcontext only carries r2=-ENOSYS,
+	 * arch/s390/kernel/syscall.c:134) into stub_data. The tracer
+	 * CONTs; sigreturn then resumes the guest with the kernel-side
+	 * syscall result already patched into the mcontext by
+	 * set_stub_state().
+	 */
+	trap_myself();
+#endif
+
 	/* Restore arch dependent state that is not part of the mcontext */
 	stub_seccomp_restore_state(&d->arch_data);
 
@@ -179,6 +198,10 @@ restart_wait:
 void __section(".__syscall_stub")
 stub_signal_restorer(void)
 {
-	/* We must not have anything on the stack when doing rt_sigreturn */
-	stub_syscall0(__NR_rt_sigreturn);
+	/* We must not have anything on the stack when doing rt_sigreturn.
+	 * NOTE: __NR_rt_sigreturn here resolves through <asm/unistd.h> to
+	 * the HOST (x86_64) table (15) because stub objects get no target
+	 * uapi include path; s390x needs 173. Same class of bug as the
+	 * execveat nr in userspace_tramp. */
+	stub_syscall0(173); /* s390x __NR_rt_sigreturn */
 }
