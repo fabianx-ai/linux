@@ -46,6 +46,7 @@ subarch-$(CONFIG_UPROBES) += ../kernel/uprobes.o ../lib/insn.o ../lib/inat.o
 subarch-$(CONFIG_KPROBES) += ../kernel/kprobes/core.o ../lib/nops.o
 
 obj-$(CONFIG_RETHOOK) += rethook.o
+obj-$(CONFIG_BPF_JIT) += bpf_fixup.o
 subarch-$(CONFIG_KPROBES) += $(if $(CONFIG_UPROBES),,../lib/insn.o ../lib/inat.o)
 
 # inat.c includes the generated inat-tables.c via a quoted include; the

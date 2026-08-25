@@ -22,6 +22,9 @@
 #include <asm/text-patching.h>
 #include <asm/unwind.h>
 #include <asm/cfi.h>
+#ifdef CONFIG_UML
+#include <asm/ptrace.h>	/* um: HOST_* gp[] register slots */
+#endif
 
 static bool all_callee_regs_used[4] = {true, true, true, true};
 
@@ -214,14 +217,26 @@ static const int reg2pt_regs[] = {
 };
 #else
 /*
- * UML: unused, only referenced by arena/probe-mem fixup emission, which
- * is unwired under UML (see ex_handler_bpf above). um's pt_regs uses a
- * gp[] register array rather than x86's named members; map properly when
- * those paths land.
+ * UML: the probe-mem fixup path consumes this (arch/x86/um/bpf_fixup.c).
+ * um's pt_regs is a gp[] array in x86 user_regs_struct order, so the
+ * table stores gp[]-array-relative byte offsets (HOST_* slot times the
+ * word size); the consumer divides back to a slot index. Same BPF-arg
+ * to argument-register order as the native table.
  */
-static const int reg2pt_regs[BPF_REG_AX + 1];
+#define UM_GP_OFF(r)	(HOST_##r * (int)sizeof(unsigned long))
+static const int reg2pt_regs[] = {
+	[BPF_REG_0] = UM_GP_OFF(AX),
+	[BPF_REG_1] = UM_GP_OFF(DI),
+	[BPF_REG_2] = UM_GP_OFF(SI),
+	[BPF_REG_3] = UM_GP_OFF(DX),
+	[BPF_REG_4] = UM_GP_OFF(CX),
+	[BPF_REG_5] = UM_GP_OFF(R8),
+	[BPF_REG_6] = UM_GP_OFF(BX),
+	[BPF_REG_7] = UM_GP_OFF(R13),
+	[BPF_REG_8] = UM_GP_OFF(R14),
+	[BPF_REG_9] = UM_GP_OFF(R15),
+};
 #endif
-
 /*
  * is_ereg() == true if BPF register 'reg' maps to x86-64 r8..r15
  * which need extra byte of encoding.
@@ -2627,8 +2642,16 @@ populate_extable:
 				u8 *_insn = image + proglen + (start_of_ldx - temp);
 				s64 delta;
 
-				/* populate jmp_offset for JMP above */
+#ifndef CONFIG_UML
+				/*
+				 * Populate the displacement of the EB jump
+				 * emitted before the load (native only -- um
+				 * emits no such jump; on the um path this
+				 * write overwrites the last byte of the
+				 * instruction preceding the load, F70).
+				 */
 				start_of_ldx[-1] = prog - start_of_ldx;
+#endif
 
 				if (!bpf_prog->aux->extable)
 					break;

@@ -432,8 +432,20 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 
 	if (!err)
 		goto out;
-	else if (!is_user && arch_fixup(ip, regs))
+	else if (!is_user && arch_fixup(ip, regs)) {
+		/*
+		 * arch_fixup() edited only this handler's local register
+		 * copy; sigreturn restores the mcontext, so the resumed
+		 * ip/register state must be written back or the faulting
+		 * instruction simply re-executes. This path never had a
+		 * live extable producer on um (uaccess is fault-proof by
+		 * construction), so the missing writeback went unnoticed
+		 * until the BPF probe-mem extable became its first real
+		 * consumer (F71).
+		 */
+		mc_set_regs(regs, mc, 0);
 		goto out;
+	}
 
 	if (!is_user) {
 		show_regs(container_of(regs, struct pt_regs, regs));
