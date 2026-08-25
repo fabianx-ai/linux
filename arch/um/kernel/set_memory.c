@@ -118,13 +118,26 @@ void uml_text_poke_fixup(unsigned long addr, size_t len, bool writable)
  * images, kernel text is r-x from the host loader and is not in the ROX
  * registry, so the writable window must be created here: flip the covered
  * page(s) to RWX, copy, flip back to R-X.
+ *
+ * F75: serialize the window. Native holds text_mutex across the whole
+ * poke; here two trampolines sharing a text page could otherwise
+ * interleave A:RWX -> B:RWX -> A:RX -> B:memcpy-fault (a kernel-mode
+ * fault on text), reachable even on UP via timer-IRQ preemption between
+ * the two host mprotect calls. This is the UP answer; SMP guests
+ * additionally need the concurrent-observer story the poke commit
+ * already defers (a mutex does not stop another CPU executing the page
+ * mid-window).
  */
+static DEFINE_MUTEX(uml_text_poke_mutex);
+
 void uml_kernel_text_poke(void *addr, const void *opcode, size_t len)
 {
 	unsigned long start = (unsigned long)addr & PAGE_MASK;
 	unsigned long end = PAGE_ALIGN((unsigned long)addr + len);
 
+	mutex_lock(&uml_text_poke_mutex);
 	os_protect_memory((void *)start, end - start, 1, 1, 1);
 	memcpy(addr, opcode, len);
 	os_protect_memory((void *)start, end - start, 1, 0, 1);
+	mutex_unlock(&uml_text_poke_mutex);
 }
