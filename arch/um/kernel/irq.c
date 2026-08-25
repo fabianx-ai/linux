@@ -236,7 +236,7 @@ static void _sigio_handler(struct uml_pt_regs *regs,
 	}
 
 	if (!timetravel_handlers_only)
-		free_irqs();
+		schedule_free_irqs();
 }
 
 void sigio_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs,

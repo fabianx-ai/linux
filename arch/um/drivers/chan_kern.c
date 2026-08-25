@@ -6,6 +6,7 @@
 #include <linux/slab.h>
 #include <linux/tty.h>
 #include <linux/tty_flip.h>
+#include <linux/workqueue.h>
 #include "chan.h"
 #include <os.h>
 #include <irq_kern.h>
@@ -236,6 +237,27 @@ void free_irqs(void)
 			um_free_irq(chan->line->write_irq, chan);
 		chan->enabled = 0;
 	}
+}
+
+/*
+ * F76: free_irqs() must sleep (um_free_irq -> free_irq ->
+ * __synchronize_irq -> synchronize_rcu), but its only caller was the
+ * SIGIO hard handler -- an atomic context, so a pending deferred chan
+ * free under SIGIO load triggers "scheduling while atomic". Run the
+ * drain from a workqueue instead; the frees were already asynchronous
+ * by design (irqs_to_free exists because close_one_chan() runs from
+ * chan_interrupt and cannot free its own IRQ inline).
+ */
+static void free_irqs_work_fn(struct work_struct *work)
+{
+	free_irqs();
+}
+
+static DECLARE_WORK(free_irqs_work, free_irqs_work_fn);
+
+void schedule_free_irqs(void)
+{
+	schedule_work(&free_irqs_work);
 }
 
 static void close_one_chan(struct chan *chan, int delay_free_irq)
