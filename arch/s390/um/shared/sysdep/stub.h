@@ -12,6 +12,7 @@
 #define __SYSDEP_STUB_H
 
 #include <stddef.h>
+#include <linux/stringify.h>
 /* The stub TUs compile on the BUILD seat (x86_64) with host libc
  * headers, so <asm/unistd.h> would give the x86_64 table — wrong for
  * every number the s390x kernel dispatches on. Override ALL numbers
@@ -225,16 +226,12 @@ static __always_inline void *get_stub_data(void)
 }
 
 /*
- * Entry instructions of the stub_exe binary, emitted from file-scope
- * asm in stub_exe.c: move the stack pointer down past the future stub
- * mappings, then branch to real_init() (which never returns).
+ * Entry body of the stub_exe binary, expanded inside the shared
+ * file-scope _start asm in stub_exe.c: move the stack pointer down
+ * past the future stub mappings, then call real_init() (which never
+ * returns; the idle jump after it is unreachable belt-and-braces).
  */
 #define STUB_EXE_START							\
-	".text\n"							\
-	".align 8\n"							\
-	".globl _start\n"						\
-	".type _start,@function\n"					\
-	"_start:\n"							\
 	"	aghi	%r15, -" __stringify(STUB_SIZE) "\n"		\
 	"	brasl	%r14, real_init\n"				\
 	"	j	.\n"
@@ -267,6 +264,14 @@ static __always_inline void stub_seccomp_save_state(struct stub_data_arch *arch)
  * (F-s1) — unlike x86 arch_prctl and arm64 TPIDR_EL0.
  */
 static __always_inline void stub_seccomp_restore_state(struct stub_data_arch *arch)
+{
+}
+
+/*
+ * No s390x-specific stub init: no PAC keys (arm64), no TLS register
+ * to set (F-s1 — acrs are ptrace-visible on both consumption routes).
+ */
+static __always_inline void stub_arch_init(unsigned long arch_flags)
 {
 }
 
