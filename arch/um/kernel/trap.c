@@ -279,7 +279,7 @@ void fatal_sigsegv(void)
 
 #ifdef CONFIG_KPROBES
 /* async signals masked in the signal frame for a pending single-step */
-static unsigned long kprobe_ss_masked;
+static DEFINE_PER_CPU(unsigned long, kprobe_ss_masked);
 
 /*
  * On native x86, setup_singlestep() clears EFLAGS.IF in the saved regs,
@@ -289,23 +289,48 @@ static unsigned long kprobe_ss_masked;
  * handler running inside the single-step window could hit another kprobe
  * and corrupt the per-cpu kprobe state (a class of reentry the native
  * IF-clear rules out). Mask the interrupt signals in the signal frame
- * while a step is pending, and unmask them once no step is pending
- * anymore (the completing int3, or the fault path in segv()).
+ * while a step is pending, and unmask them once the episode has fully
+ * ended (the completing int3, or the fault path in segv()).
+ *
+ * F73: the unmask must land in the OUTERMOST relayed frame of the
+ * episode. An um kprobe episode is strictly single-threaded and ends
+ * exactly when the core clears current_kprobe, so the outermost
+ * completing frame is the one active when kprobe_running() goes false
+ * after core handling. The previous rule (unmask in the first
+ * non-stepping frame) fired in the INNER completing frame of a nested
+ * episode (probe hit from a post_handler), consumed and zeroed the
+ * global there, and the outer frame's sigreturn then restored
+ * still-masked async signals forever -- timer and I/O dead. Nested
+ * completions now keep the bits (kprobe_running() still true, they
+ * return into the outer episode); only the episode-ending frame
+ * unmasks. kprobe_busy/unregister-time frames are episode-external
+ * (accumulator stays 0, no-op). The cell is per-CPU: mid-episode
+ * migration is already illegal for the same reason as native (the
+ * step runs with preemption masked off); this removes the unguarded
+ * global but does not by itself make SMP+KPROBES safe (text_poke's
+ * concurrent-observer story stays deferred).
  */
 static void kprobe_update_ss_mask(void *mc)
 {
 	struct kprobe_ctlblk *kcb = get_kprobe_ctlblk();
+	unsigned long *masked = this_cpu_ptr(&kprobe_ss_masked);
 
 	if (kprobe_running() &&
 	    (kcb->kprobe_status == KPROBE_HIT_SS ||
 	     kcb->kprobe_status == KPROBE_REENTER)) {
-		kprobe_ss_masked |= mc_mask_async_signals(mc);
-	} else if (kprobe_ss_masked) {
-		mc_unmask_async_signals(mc, kprobe_ss_masked);
-		kprobe_ss_masked = 0;
+		*masked |= mc_mask_async_signals(mc);
+	} else if (!kprobe_running() && *masked) {
+		mc_unmask_async_signals(mc, *masked);
+		*masked = 0;
 	}
 }
 NOKPROBE_SYMBOL(kprobe_update_ss_mask);
+
+/* read-only accessor for the nested-episode selftest (rung d) */
+unsigned long um_kprobe_ss_masked_read(int cpu)
+{
+	return per_cpu(kprobe_ss_masked, cpu);
+}
 #endif
 
 /**

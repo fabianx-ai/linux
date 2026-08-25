@@ -30,6 +30,7 @@ obj-y += set_memory.o
 obj-y += execmem.o
 obj-$(CONFIG_BPF_JIT) += bpf_jit_shim.o
 obj-$(CONFIG_FUNCTION_TRACER) += ftrace_stub.o
+obj-$(CONFIG_KPROBES) += kprobe_nested_test.o
 
 USER_OBJS := config.o
 
