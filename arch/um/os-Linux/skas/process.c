@@ -542,10 +542,11 @@ static int userspace_tramp(void *data)
 	if (ret != sizeof(init_data))
 		exit(4);
 
-	/* Raw execveat for compatibility with older libc versions.
-	 * NOTE: glibc's varargs syscall() mis-routes on this path (the
-	 * svc went out with the wrong nr and the kernel saw EINVAL), so
-	 * issue the svc by hand: nr in r1, args r2-r6. */
+	/* execveat of the stub image. s390 glibc's varargs syscall()
+	 * mis-routes on this path (the svc went out with the wrong nr
+	 * and the kernel saw EINVAL), so issue the svc by hand there:
+	 * nr in r1, args r2-r6. Other backends use the plain wrapper. */
+#ifdef CONFIG_UML_S390
 	{
 		register long r2 __asm__("2") = stub_exe_fd;
 		register long r3 __asm__("3") = (unsigned long)"";
@@ -559,6 +560,10 @@ static int userspace_tramp(void *data)
 				 : "d"(r1), "d"(r3), "d"(r4), "d"(r5), "d"(r6)
 				 : "memory", "cc");
 	}
+#else
+	syscall(__NR_execveat, stub_exe_fd, (unsigned long)"",
+		(unsigned long)argv, NULL, AT_EMPTY_PATH);
+#endif
 
 	exit(5);
 }
@@ -698,8 +703,7 @@ int start_userspace(struct mm_id *mm_id)
 		proc_data->futex = FUTEX_IN_CHILD;
 
 	mm_id->pid = clone(userspace_tramp, (void *) sp,
-		    CLONE_VFORK | CLONE_VM | 0x800000000ULL /* CLONE_NNP */ |
-		    SIGCHLD,
+		    CLONE_VFORK | CLONE_VM | SIGCHLD,
 		    (void *)&tramp_data);
 	if (mm_id->pid < 0) {
 		err = -errno;
@@ -917,6 +921,7 @@ void userspace(struct uml_pt_regs *regs)
 			 * handle_page_fault issues the right
 			 * FAULT_FLAG_WRITE — a misclassified COW or
 			 * stack-growth store livelocks. */
+#ifdef CONFIG_UML_S390
 			PT_SYSCALL_NR(regs->gp) = si->si_syscall;
 			if (sig == SIGSEGV) {
 				/* The s390 macro ignores its mcontext
@@ -928,6 +933,7 @@ void userspace(struct uml_pt_regs *regs)
 					(si->si_code == SEGV_ACCERR) ? 0x04 : 0x11;
 				regs->faultinfo.trap_no = regs->faultinfo.error_code;
 			}
+#endif
 		} else {
 			int pid = mm_id->pid;
 

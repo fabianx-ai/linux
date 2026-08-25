@@ -25,4 +25,8 @@ CHECKFLAGS	+= -D__s390__ -D__s390x__
 # x86_64 headers (wrong layout AND wrong syscall numbers). -isystem
 # puts the target's multiarch libc headers ahead of the host ones.
 # Kernel objects are unaffected (different flags variable).
-USER_CFLAGS += -isystem /usr/s390x-linux-gnu/include
+# NOTE: this file is included by arch/um/Makefile BEFORE it defines
+# USER_CFLAGS, so a USER_CFLAGS += here would be overwritten — the
+# flag must ride the ARCH_USER_CFLAGS hook the shared Makefile
+# appends after its USER_CFLAGS definition.
+ARCH_USER_CFLAGS = -isystem /usr/s390x-linux-gnu/include
