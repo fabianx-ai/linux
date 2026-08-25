@@ -91,12 +91,23 @@ void interrupt_end(void)
 	while (thread_flags & _TIF_WORK_MASK) {
 		if (thread_flags & _TIF_NEED_RESCHED)
 			schedule();
+		/*
+		 * F74: uprobe_notify_resume() runs before do_signal(),
+		 * matching the generic-entry ordering the reused x86
+		 * uprobe core assumes (kernel/entry/common.c): handle_swbp
+		 * computes the probe address as ip-1 at notify time, so if
+		 * do_signal() has already rewritten the ip to a handler,
+		 * the lookup keys on handler-1, finds nothing, and the
+		 * "restart" resumes one byte before the handler -- and in
+		 * the XOL-completion case the post-xol ip update would
+		 * overwrite the just-installed handler ip instead.
+		 */
+		if (thread_flags & _TIF_UPROBE)
+			uprobe_notify_resume(regs);
 		if (thread_flags & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
 			do_signal(regs);
 		if (thread_flags & _TIF_NOTIFY_RESUME)
 			resume_user_mode_work(regs);
-		if (thread_flags & _TIF_UPROBE)
-			uprobe_notify_resume(regs);
 		thread_flags = read_thread_flags();
 	}
 }
