@@ -92,6 +92,7 @@ static int __init f73_nested_test(void)
 		return 0;
 	}
 
+	pr_info("F73-RUNG: probes armed, starting soak\n");
 	for (i = 0; i < F73_SOAK; i++)
 		f73_target_a();
 
@@ -108,7 +109,7 @@ static int __init f73_nested_test(void)
 		 f73_b_pre == F73_SOAK && f73_b_post == F73_SOAK &&
 		 masked == 0 && f73_timer_fired) ? "PASS" : "FAIL");
 
-	del_timer_sync(&t);
+	timer_delete_sync(&t);
 	unregister_kprobe(&f73_kp_a);
 	unregister_kprobe(&f73_kp_b);
 	return 0;
