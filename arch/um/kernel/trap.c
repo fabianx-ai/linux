@@ -532,6 +532,24 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
 				container_of(regs, struct pt_regs, regs);
 
 			mc_get_regs(regs, mc);
+			/*
+			 * F78: int3 is a synchronous trap, not a maskable
+			 * interrupt -- on native it stops the CPU even with
+			 * IF clear, so a nested hit is handled immediately.
+			 * With SIGTRAP blocked during this frame (the host
+			 * default for a non-NODEFER handler), a nested int3
+			 * pends instead: the CPU resumes past the 0xcc
+			 * byte, executes the displaced instruction's tail
+			 * in text, and the deferred delivery is later
+			 * misread as a fresh hit at a stale address --
+			 * resume into already-executed code with a stale
+			 * frame. Unblock SIGTRAP for the duration of kprobe
+			 * handling so nested hits deliver like native; the
+			 * frame sigreturn restores the mask, and the
+			 * ss_mask machinery keeps the async IRQ signals
+			 * covered meanwhile.
+			 */
+			change_sig(SIGTRAP, 1);
 			if (kprobe_int3_handler(pregs)) {
 				kprobe_update_ss_mask(mc);
 				mc_set_regs(regs, mc, 0);

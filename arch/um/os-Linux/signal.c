@@ -49,10 +49,11 @@ static void __uml_nokprobe sig_handler_common(int sig, struct siginfo *si,
 
 	/*
 	 * Enable signals unless this is an IRQ signal or a kernel-mode
-	 * breakpoint trap: kprobe int3 handling must run, like the native
-	 * int3 handler, without interrupts (relay_signal() feeds
-	 * kernel-mode SIGTRAP to the kprobe core; anything else panics
-	 * there regardless of the signal state).
+	 * breakpoint trap. The SIGTRAP frame itself stays masked on
+	 * entry (host default); relay_signal() re-enables SIGTRAP for
+	 * the kprobe handling window (F78), because int3 is a
+	 * synchronous trap, not a maskable interrupt -- nested hits
+	 * must deliver immediately, like native.
 	 */
 	if ((sig != SIGIO) && (sig != SIGWINCH) && (sig != SIGCHLD) &&
 	    (sig != SIGTRAP))
