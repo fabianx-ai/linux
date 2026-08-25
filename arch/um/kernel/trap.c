@@ -367,7 +367,20 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 		struct pt_regs *pregs = container_of(regs, struct pt_regs,
 						     regs);
 		unsigned long saved_ip = UPT_IP(regs);
-		bool handled = kprobe_page_fault(pregs, 0);
+		bool handled;
+
+		/*
+		 * F72: do not route through kprobe_page_fault(): its
+		 * preemptible() gate encodes the native contract that an
+		 * int3 stops with IF clear in the live EFLAGS. Under um
+		 * the "flags" are the host signal mask, which
+		 * sig_handler_common unblocks for SIGSEGV, and nothing in
+		 * the relay path raises preempt_count -- so the gate
+		 * never passed and the rewind below never ran. Call the
+		 * handler directly whenever a kprobe is active; the
+		 * user_mode gate stays above.
+		 */
+		handled = kprobe_running() && kprobe_fault_handler(pregs, 0);
 
 		if (handled || UPT_IP(regs) != saved_ip) {
 			kprobe_update_ss_mask(mc);
