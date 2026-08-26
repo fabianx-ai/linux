@@ -486,7 +486,17 @@ void um_free_irq(int irq, void *dev)
 		return;
 
 	free_irq_by_irq_and_dev(irq, dev);
-	free_irq(irq, dev);
+	/*
+	 * free_irq() sleeps (synchronize_rcu via __synchronize_irq), which
+	 * is illegal from the contexts uml_cleanup() can run in — a fatal
+	 * signal lands on an arbitrary thread, and sleeping on the idle
+	 * thread is fatal: the GP completion wakes a dequeued idle task
+	 * and dies on idle_sched_class.enqueue_task being NULL (F79).
+	 * At teardown (kmalloc_ok == 0) the process is exiting, which
+	 * reaps the IRQ state; skip the sleeping part.
+	 */
+	if (kmalloc_ok)
+		free_irq(irq, dev);
 	clear_bit(irq, irqs_allocated);
 }
 EXPORT_SYMBOL(um_free_irq);
