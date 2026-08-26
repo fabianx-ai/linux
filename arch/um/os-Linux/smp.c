@@ -82,7 +82,7 @@ void os_start_secondary(void *arg, jmp_buf *switch_buf)
 		panic("Failed to restore the signal mask, errno = %d", errno);
 
 	kfree(data);
-	longjmp(*switch_buf, 1);
+	uml_relay_jump_restore(switch_buf, 1);
 
 	/* unreachable */
 	printk(UM_KERN_ERR "impossible long jump!");

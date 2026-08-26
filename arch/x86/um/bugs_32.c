@@ -17,7 +17,7 @@ static jmp_buf cmov_test_return;
 static void cmov_sigill_test_handler(int sig)
 {
 	host_has_cmov = 0;
-	longjmp(cmov_test_return, 1);
+	uml_relay_jump_restore(&cmov_test_return, 1);
 }
 
 void arch_check_bugs(void)
@@ -32,7 +32,7 @@ void arch_check_bugs(void)
 	sigemptyset(&new.sa_mask);
 	sigaction(SIGILL, &new, &old);
 
-	if (setjmp(cmov_test_return) == 0) {
+	if (uml_relay_jump_save(&cmov_test_return) == 0) {
 		unsigned long foo = 0;
 		__asm__ __volatile__("cmovz %0, %1" : "=r" (foo) : "0" (foo));
 		printk(UM_KERN_CONT "Yes\n");
