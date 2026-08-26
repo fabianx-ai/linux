@@ -41,7 +41,13 @@ static inline int is_kernel(unsigned long addr)
 static inline int is_ksym_addr(unsigned long addr)
 {
 	if (IS_ENABLED(CONFIG_KALLSYMS_ALL))
-		return is_kernel(addr);
+		/*
+		 * __is_kernel is [_stext, _end); arches whose linker script
+		 * places .init.text outside that range (UM puts it below
+		 * _stext) must not have their init-text symbols gated out —
+		 * the table contains them (F80).
+		 */
+		return is_kernel(addr) || is_kernel_inittext(addr);
 
 	return is_kernel_text(addr) || is_kernel_inittext(addr);
 }
