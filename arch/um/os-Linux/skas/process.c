@@ -1246,6 +1246,12 @@ void userspace(struct uml_pt_regs *regs)
 
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {
+	/*
+	 * Scheduler-contract restore requires every recorded field of
+	 * the buffer to be valid, so fill the FP fields (values are
+	 * irrelevant for a fresh context that owns no live state).
+	 */
+	memset(buf, 0, sizeof(*buf));
 	(*buf)[0].JB_IP = (unsigned long) handler;
 	(*buf)[0].JB_SP = UM_THREAD_START_SP(stack);
 }
@@ -1262,11 +1268,16 @@ void switch_threads(jmp_buf *me, jmp_buf *you)
 	/*
 	 * The scheduler switch: both sides run in this host thread and
 	 * frames here may hold live values in callee-saved FP
-	 * registers — use the full-width scheduler contract
-	 * (uml_sched_jump_*, longjmp.h), never the relay pair.
+	 * registers. BOTH halves must be the full-width scheduler
+	 * contract: a sched-save paired with the GPR-only relay
+	 * restore leaves the INCOMING task's FP registers holding the
+	 * OUTGOING task's values — the failed-naive-fix trap in its
+	 * first-attempt form (F-s20). Brand-new tasks bootstrap their
+	 * FP fields at creation (copy_thread), so every legal restore
+	 * source of this pair carries valid FP state.
 	 */
 	if (UML_SCHED_JUMP_SAVE(me) == 0)
-		UML_RELAY_JUMP_RESTORE(you, 1);
+		UML_SCHED_JUMP_RESTORE(you, 1);
 }
 
 static jmp_buf initial_jmpbuf;
