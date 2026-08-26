@@ -17,6 +17,14 @@
 #include <linux/set_memory.h>
 #include <os.h>
 
+/*
+ * Hard cap on concurrently tracked ROX ranges. One entry per BPF JIT
+ * pack (2 MiB each, so 64 entries ~= 128 MiB of JIT'd code) or
+ * trampoline image. UM's execmem window is the vmalloc range itself,
+ * so this registry -- not the window -- is the binding capacity
+ * constraint: the 65th concurrent region fails set_memory_rox() with
+ * -ENOSPC. Raise only as a deliberate JIT-capacity policy decision.
+ */
 #define MAX_ROX_RANGES 64
 
 static struct {
@@ -26,8 +34,11 @@ static int nr_rox_ranges;
 
 static int rox_range_add(unsigned long start, unsigned long end)
 {
-	if (nr_rox_ranges == MAX_ROX_RANGES)
+	if (nr_rox_ranges == MAX_ROX_RANGES) {
+		pr_warn_ratelimited("um: ROX range registry full (%d entries); refusing to track more\n",
+				    MAX_ROX_RANGES);
 		return -ENOSPC;
+	}
 	rox_ranges[nr_rox_ranges].start = start;
 	rox_ranges[nr_rox_ranges].end = end;
 	nr_rox_ranges++;
@@ -58,11 +69,22 @@ bool uml_is_rox_range(unsigned long addr)
 
 int set_memory_rox(unsigned long addr, int numpages)
 {
-	int ret = os_protect_memory((void *)addr, numpages << PAGE_SHIFT,
-				    1, 0, 1);
+	int ret;
 
-	if (!ret)
-		ret = rox_range_add(addr, addr + (numpages << PAGE_SHIFT));
+	/*
+	 * Reserve the registry slot BEFORE flipping the pages: a late
+	 * -ENOSPC would otherwise leave them ROX but untracked (v3k-review
+	 * R1) -- the text_poke fixup would never open a writable window
+	 * for them again. On mprotect failure, drop the reservation.
+	 */
+	ret = rox_range_add(addr, addr + (numpages << PAGE_SHIFT));
+	if (ret)
+		return ret;
+
+	ret = os_protect_memory((void *)addr, numpages << PAGE_SHIFT,
+				1, 0, 1);
+	if (ret)
+		rox_range_del(addr);
 	return ret;
 }
 
