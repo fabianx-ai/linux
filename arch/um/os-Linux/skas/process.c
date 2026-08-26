@@ -1259,8 +1259,14 @@ void switch_threads(jmp_buf *me, jmp_buf *you)
 {
 	unscheduled_userspace_iterations = 0;
 
-	if (UML_SETJMP(me) == 0)
-		UML_LONGJMP(you, 1);
+	/*
+	 * The scheduler switch: both sides run in this host thread and
+	 * frames here may hold live values in callee-saved FP
+	 * registers — use the full-width scheduler contract
+	 * (uml_sched_jump_*, longjmp.h), never the relay pair.
+	 */
+	if (UML_SCHED_JUMP_SAVE(me) == 0)
+		UML_RELAY_JUMP_RESTORE(you, 1);
 }
 
 static jmp_buf initial_jmpbuf;
@@ -1276,14 +1282,20 @@ int start_idle_thread(void *stack, jmp_buf *switch_buf)
 	set_handler(SIGWINCH);
 
 	/*
-	 * Can't use UML_SETJMP or UML_LONGJMP here because they save
+	 * Can't use the UML_*_JUMP_SAVE wrappers here because they save
 	 * and restore signals, with the possible side-effect of
 	 * trying to handle any signals which came when they were
 	 * blocked, which can't be done on this stack.
 	 * Signals must be blocked when jumping back here and restored
 	 * after returning to the jumper.
+	 *
+	 * Contract: this thread never holds live callee-saved FP state
+	 * across these jumps (it only hand-crafts fresh contexts and
+	 * runs callbacks entered via the relay jump below), so the
+	 * GPR-only relay pair is sufficient — and required: the
+	 * INIT_JMP_NEW_THREAD buffers it fills are IP/SP-only.
 	 */
-	n = setjmp(initial_jmpbuf);
+	n = uml_relay_jump_save(&initial_jmpbuf);
 	switch (n) {
 	case INIT_JMP_NEW_THREAD:
 		(*switch_buf)[0].JB_IP = (unsigned long) uml_finishsetup;
@@ -1291,7 +1303,7 @@ int start_idle_thread(void *stack, jmp_buf *switch_buf)
 		break;
 	case INIT_JMP_CALLBACK:
 		(*cb_proc)(cb_arg);
-		longjmp(*cb_back, 1);
+		uml_relay_jump_restore(cb_back, 1);
 		break;
 	case INIT_JMP_HALT:
 		kmalloc_ok = 0;
@@ -1304,7 +1316,7 @@ int start_idle_thread(void *stack, jmp_buf *switch_buf)
 		       __func__, n);
 		fatal_sigsegv();
 	}
-	longjmp(*switch_buf, 1);
+	uml_relay_jump_restore(switch_buf, 1);
 
 	/* unreachable */
 	printk(UM_KERN_ERR "impossible long jump!");
@@ -1321,8 +1333,14 @@ void initial_thread_cb_skas(void (*proc)(void *), void *arg)
 	cb_back = &here;
 
 	initial_jmpbuf_lock();
-	if (UML_SETJMP(&here) == 0)
-		UML_LONGJMP(&initial_jmpbuf, INIT_JMP_CALLBACK);
+	/*
+	 * The callback runs arbitrary kernel code in THIS context and
+	 * returns here — full-width save of our frame (the relay jump
+	 * into initial_jmpbuf drops us into the idle thread, whose
+	 * own relay contract brings it back to this setjmp point).
+	 */
+	if (UML_SCHED_JUMP_SAVE(&here) == 0)
+		UML_RELAY_JUMP_RESTORE(&initial_jmpbuf, INIT_JMP_CALLBACK);
 	initial_jmpbuf_unlock();
 
 	cb_proc = NULL;
@@ -1333,7 +1351,7 @@ void initial_thread_cb_skas(void (*proc)(void *), void *arg)
 void halt_skas(void)
 {
 	initial_jmpbuf_lock();
-	UML_LONGJMP(&initial_jmpbuf, INIT_JMP_HALT);
+	UML_RELAY_JUMP_RESTORE(&initial_jmpbuf, INIT_JMP_HALT);
 	/* unreachable */
 }
 
@@ -1355,6 +1373,7 @@ __uml_setup("noreboot", noreboot_cmd_param,
 void reboot_skas(void)
 {
 	initial_jmpbuf_lock();
-	UML_LONGJMP(&initial_jmpbuf, noreboot ? INIT_JMP_HALT : INIT_JMP_REBOOT);
+	UML_RELAY_JUMP_RESTORE(&initial_jmpbuf,
+			       noreboot ? INIT_JMP_HALT : INIT_JMP_REBOOT);
 	/* unreachable */
 }
