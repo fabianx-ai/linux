@@ -27,6 +27,7 @@ obj-$(CONFIG_EARLY_PRINTK) += early_printk.o
 obj-$(CONFIG_STACKTRACE) += stacktrace.o
 obj-$(CONFIG_SMP) += smp.o
 obj-y += set_memory.o
+obj-$(CONFIG_UM_ROX_KUNIT_TEST) += set_memory_kunit.o
 obj-y += execmem.o
 obj-$(CONFIG_BPF_JIT) += bpf_jit_shim.o
 obj-$(CONFIG_FUNCTION_TRACER) += ftrace_stub.o

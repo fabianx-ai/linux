@@ -312,3 +312,12 @@ endmenu
 # X86_REQUIRED_FEATURE_*/X86_DISABLED_FEATURE_* consumed by
 # <asm/cpufeaturemasks.h> generation (see arch/um/Makefile)
 source "arch/x86/Kconfig.cpufeatures"
+
+config UM_ROX_KUNIT_TEST
+	tristate "KUnit test for the UML ROX range registry" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Enable to run the ROX range registry capacity test at boot or
+	  module load time: pins the 64-entry cap and the -ENOSPC failure
+	  contract of set_memory_rox().
