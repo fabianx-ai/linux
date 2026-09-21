@@ -13,6 +13,7 @@ enum {
 };
 
 #include <linux/compiler.h>
+#include <asm/thread_info.h>	/* THREAD_SIZE for the stack-access API */
 #ifndef CONFIG_X86_32
 #define __FRAME_OFFSETS /* Needed to get the R* macros */
 #endif
@@ -97,6 +98,105 @@ extern long arch_prctl(struct task_struct *task, int option,
 #endif
 
 #define user_stack_pointer(regs) PT_REGS_SP(regs)
+
+#define instruction_pointer_set(regs, val) (PT_REGS_IP(regs) = (val))
+
+/*
+ * The regs-and-stack access API (KPROBE_EVENTS fetches probe arguments
+ * through it). um's kernel stack is in-process host memory; PT_REGS_SP
+ * is the interrupted stack. Same shape as x86's header inlines, on the
+ * um accessors.
+ */
+#define kernel_stack_pointer(regs)	(PT_REGS_SP(regs))
+
+static inline bool regs_within_kernel_stack(struct pt_regs *regs,
+					    unsigned long addr)
+{
+	return ((addr & ~(THREAD_SIZE - 1)) ==
+		(PT_REGS_SP(regs) & ~(THREAD_SIZE - 1)));
+}
+
+static inline unsigned long *regs_get_kernel_stack_nth_addr(struct pt_regs *regs,
+							    unsigned int n)
+{
+	unsigned long *addr = (unsigned long *)PT_REGS_SP(regs);
+
+	addr += n;
+	if (regs_within_kernel_stack(regs, (unsigned long)addr))
+		return addr;
+	else
+		return NULL;
+}
+
+/* To avoid include hell, we can't include uaccess.h */
+extern long copy_from_kernel_nofault(void *dst, const void *src, size_t size);
+
+static inline unsigned long regs_get_kernel_stack_nth(struct pt_regs *regs,
+						      unsigned int n)
+{
+	unsigned long *addr;
+	unsigned long val;
+	long ret;
+
+	addr = regs_get_kernel_stack_nth_addr(regs, n);
+	if (addr) {
+		ret = copy_from_kernel_nofault(&val, addr, sizeof(val));
+		if (!ret)
+			return val;
+	}
+	return 0;
+}
+
+/*
+ * regs_get_register() - get register value from its offset
+ * @regs:	pt_regs from which register value is gotten
+ * @offset:	offset of the register in pt_regs (i.e. in the uml_pt_regs
+ *		gp[] array, see regs_query_register_offset())
+ *
+ * If @offset is out of the gp[] register frame, this returns 0.
+ */
+static inline unsigned long regs_get_register(struct pt_regs *regs,
+					      unsigned int offset)
+{
+	if (unlikely(offset >= MAX_REG_OFFSET))
+		return 0;
+	return *(unsigned long *)((unsigned long)regs + offset);
+}
+
+extern int regs_query_register_offset(const char *name);
+
+#ifdef CONFIG_X86_64
+/**
+ * regs_get_kernel_argument() - get Nth function argument in kernel
+ * @regs:	pt_regs of that context
+ * @n:		function argument number (start from 0)
+ *
+ * regs_get_kernel_argument() returns @n th argument of the function call.
+ * Note that this chooses the most likely register mapping. The um kernel
+ * is a normal SysV AMD64 binary, so the argument registers and the
+ * stack layout past them are the native x86-64 kernel's (the return
+ * address occupies stack slot 0).
+ */
+static inline unsigned long regs_get_kernel_argument(struct pt_regs *regs,
+						     unsigned int n)
+{
+	static const unsigned int argument_offs[] = {
+		offsetof(struct pt_regs, regs.gp[HOST_DI]),
+		offsetof(struct pt_regs, regs.gp[HOST_SI]),
+		offsetof(struct pt_regs, regs.gp[HOST_DX]),
+		offsetof(struct pt_regs, regs.gp[HOST_CX]),
+		offsetof(struct pt_regs, regs.gp[HOST_R8]),
+		offsetof(struct pt_regs, regs.gp[HOST_R9]),
+	};
+#define NR_REG_ARGUMENTS 6
+
+	if (n >= NR_REG_ARGUMENTS) {
+		n -= NR_REG_ARGUMENTS - 1;
+		return regs_get_kernel_stack_nth(regs, n);
+	} else
+		return regs_get_register(regs, argument_offs[n]);
+}
+#endif
 
 extern void arch_switch_to(struct task_struct *to);
 

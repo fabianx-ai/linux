@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
+generated-y += cpufeaturemasks.h
 generic-y += bug.h
 generic-y += compat.h
 generic-y += device.h
@@ -9,22 +10,19 @@ generic-y += ftrace.h
 generic-y += hw_irq.h
 generic-y += irq_regs.h
 generic-y += irq_work.h
-generic-y += kdebug.h
 generic-y += mcs_spinlock.h
 generic-y += mmiowb.h
 generic-y += module.h
 generic-y += module.lds.h
 generic-y += parport.h
-generic-y += percpu.h
 generic-y += percpu_types.h
 generic-y += preempt.h
 generic-y += ring_buffer.h
 generic-y += runtime-const.h
 generic-y += softirq_stack.h
 generic-y += switch_to.h
-generic-y += topology.h
 generic-y += trace_clock.h
-generic-y += kprobes.h
+# kprobes.h: subarch-provided (arch/x86/um/asm), not generic
 generic-y += mm_hooks.h
 generic-y += vga.h
 generic-y += video.h

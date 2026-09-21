@@ -24,6 +24,7 @@
 #include <asm/processor.h>
 #include <asm/cpufeature.h>
 #include <asm/sections.h>
+#include <asm/set_memory.h>
 #include <asm/setup.h>
 #include <asm/text-patching.h>
 #include <as-layout.h>
@@ -453,20 +454,42 @@ void apply_alternatives(struct alt_instr *start, struct alt_instr *end)
 
 void *text_poke(void *addr, const void *opcode, size_t len)
 {
-	/*
-	 * In UML, the only reference to this function is in
-	 * apply_relocate_add(), which shouldn't ever actually call this
-	 * because UML doesn't have live patching.
-	 */
-	WARN_ON(1);
+	unsigned long start = (unsigned long)addr & PAGE_MASK;
+	unsigned long end = PAGE_ALIGN((unsigned long)addr + len);
+	bool rox = uml_is_rox_range(start);
 
-	return memcpy(addr, opcode, len);
+	/*
+	 * text_poke targets are code pages by contract: ROX-registered
+	 * JIT/trampoline images (flip via the registry), kernel text
+	 * (host-loaded r-x, not registered), or executable execmem pages
+	 * such as kprobe XOL slots. The registry window covers the first
+	 * class; everything else gets a plain RWX window and is restored
+	 * to RX (kprobes' arch_arm_kprobe pokes kernel text this way).
+	 * The guest runs UP; a concurrent-observer-safe poke for SMP
+	 * guests is future work.
+	 */
+	if (rox)
+		uml_text_poke_fixup((unsigned long)addr, len, true);
+	else
+		os_protect_memory((void *)start, end - start, 1, 1, 1);
+	memcpy(addr, opcode, len);
+	if (rox)
+		uml_text_poke_fixup((unsigned long)addr, len, false);
+	else
+		os_protect_memory((void *)start, end - start, 1, 0, 1);
+	return addr;
 }
 
 void *text_poke_copy(void *addr, const void *opcode, size_t len)
 {
 	return text_poke(addr, opcode, len);
 }
+
+/*
+ * No alternatives_text_reserved() definition: um applies no alternatives
+ * patching, and x86's static inline (asm/alternative.h) returns 0 here,
+ * which is what kprobes' arch_prepare_kprobe() consults.
+ */
 
 void smp_text_poke_sync_each_cpu(void)
 {

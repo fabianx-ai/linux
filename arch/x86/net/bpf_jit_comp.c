@@ -16,8 +16,10 @@
 #include <linux/execmem.h>
 #include <asm/extable.h>
 #include <asm/ftrace.h>
+#include <asm/cpufeature.h>
 #include <asm/set_memory.h>
 #include <asm/nospec-branch.h>
+#include <asm/nops.h>
 #include <asm/text-patching.h>
 #include <asm/unwind.h>
 #include <asm/cfi.h>
@@ -198,6 +200,7 @@ static const int reg2hex[] = {
 	[X86_REG_R12] = 4, /* R12 callee saved */
 };
 
+#ifndef CONFIG_UML
 static const int reg2pt_regs[] = {
 	[BPF_REG_0] = offsetof(struct pt_regs, ax),
 	[BPF_REG_1] = offsetof(struct pt_regs, di),
@@ -210,6 +213,15 @@ static const int reg2pt_regs[] = {
 	[BPF_REG_8] = offsetof(struct pt_regs, r14),
 	[BPF_REG_9] = offsetof(struct pt_regs, r15),
 };
+#else
+/*
+ * UML: unused, only referenced by arena/probe-mem fixup emission, which
+ * is unwired under UML (see ex_handler_bpf above). um's pt_regs uses a
+ * gp[] register array rather than x86's named members; map properly when
+ * those paths land.
+ */
+static const int reg2pt_regs[BPF_REG_AX + 1];
+#endif
 
 /*
  * is_ereg() == true if BPF register 'reg' maps to x86-64 r8..r15
@@ -662,6 +674,89 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_UML
+extern void __fentry__(void);	/* arch/um/kernel/ftrace_stub.S */
+
+/* byte patterns of the UML -mcmodel=large fentry site */
+static const u8 uml_endbr64[] = { 0xf3, 0x0f, 0x1e, 0xfa };
+static const u8 uml_movabs_r10[] = { 0x49, 0xba };
+static const u8 uml_call_r10[] = { 0x41, 0xff, 0xd2 };
+
+/*
+ * UML builds with -mcmodel=large (arch/um/Makefile), so there are two
+ * patch forms:
+ *
+ *  - kernel-text fentry sites are not the 5-byte `call __fentry__` that
+ *    the native path below pokes but
+ *	endbr64; movabs $__fentry__, %r10; call *%r10
+ *    which is an indirect call through an imm64. Attaching fentry means
+ *    patching the imm64 to the BPF trampoline; detaching restores
+ *    __fentry__.
+ *    The pattern check is also the safety net for notrace functions,
+ *    whose entry is not a patch site at all (attach fails cleanly, like
+ *    the memcmp guard in the native version). No jump form: UML has no
+ *    DYNAMIC_FTRACE_WITH_JMP. The guest is UP, so no concurrent observer
+ *    can see a partially patched imm64.
+ *
+ *  - BPF trampoline/JIT images use the native 5-byte call/jmp/nop form,
+ *    which the shared __bpf_arch_text_poke handles (execmem pages are
+ *    covered by the ROX registry in the poke fixup).
+ */
+static int uml_fentry_poke(void *site, enum bpf_text_poke_type old_t,
+			   enum bpf_text_poke_type new_t, void *old_addr,
+			   void *new_addr)
+{
+	u64 want, set;
+
+	if (old_t == BPF_MOD_NOP)
+		want = (u64)__fentry__;
+	else if (old_t == BPF_MOD_CALL)
+		want = (u64)old_addr;
+	else
+		return -EINVAL;
+
+	if (new_t == BPF_MOD_NOP)
+		set = (u64)__fentry__;
+	else if (new_t == BPF_MOD_CALL)
+		set = (u64)new_addr;
+	else
+		return -EINVAL;
+
+	/* nothing to do if the site is already in the desired state */
+	if (!memcmp(site + 2, &set, sizeof(set)))
+		return 0;
+	if (memcmp(site + 2, &want, sizeof(want)))
+		return -EBUSY;
+
+	uml_kernel_text_poke(site + 2, &set, sizeof(set));
+	return 0;
+}
+
+int bpf_arch_text_poke(void *ip, enum bpf_text_poke_type old_t,
+		       enum bpf_text_poke_type new_t, void *old_addr,
+		       void *new_addr)
+{
+	u8 *site = ip;
+
+	if (!is_kernel_text((long)ip) &&
+	    !is_bpf_text_address((long)ip))
+		/* BPF poking in modules is not supported */
+		return -EINVAL;
+
+	if (is_kernel_text((long)ip)) {
+		if (!memcmp(site, uml_endbr64, sizeof(uml_endbr64)))
+			site += sizeof(uml_endbr64);
+
+		if (memcmp(site, uml_movabs_r10, sizeof(uml_movabs_r10)) ||
+		    memcmp(site + 10, uml_call_r10, sizeof(uml_call_r10)))
+			return -EINVAL;
+
+		return uml_fentry_poke(site, old_t, new_t, old_addr, new_addr);
+	}
+
+	return __bpf_arch_text_poke(ip, old_t, new_t, old_addr, new_addr);
+}
+#else
 int bpf_arch_text_poke(void *ip, enum bpf_text_poke_type old_t,
 		       enum bpf_text_poke_type new_t, void *old_addr,
 		       void *new_addr)
@@ -680,6 +775,7 @@ int bpf_arch_text_poke(void *ip, enum bpf_text_poke_type old_t,
 
 	return __bpf_arch_text_poke(ip, old_t, new_t, old_addr, new_addr);
 }
+#endif
 
 #define EMIT_LFENCE()	EMIT3(0x0F, 0xAE, 0xE8)
 
@@ -1510,6 +1606,7 @@ static int emit_atomic_ld_st_index(u8 **pprog, u32 atomic_op, u32 size,
 #define FIXUP_ARENA_ACCESS	BIT(31)
 #define DATA_ARENA_OFFSET_MASK	GENMASK(31, 16)
 
+#ifndef CONFIG_UML
 bool ex_handler_bpf(const struct exception_table_entry *x, struct pt_regs *regs)
 {
 	u32 reg = FIELD_GET(FIXUP_REG_MASK, x->fixup);
@@ -1534,6 +1631,18 @@ bool ex_handler_bpf(const struct exception_table_entry *x, struct pt_regs *regs)
 
 	return true;
 }
+#else
+/*
+ * UML: BPF extable fixups are not wired. UML uses its own
+ * absolute-format extable, not x86's fixup_exception path.
+ * struct_ops/sched_ext does not use probe-mem; fail any
+ * fixup attempt rather than mis-handle it.
+ */
+bool ex_handler_bpf(const struct exception_table_entry *x, struct pt_regs *regs)
+{
+	return false;
+}
+#endif
 
 static void detect_reg_usage(struct bpf_insn *insn, int insn_cnt,
 			     bool *regs_used)
@@ -2449,6 +2558,7 @@ populate_extable:
 				 */
 			}
 
+#ifndef CONFIG_UML
 			if (BPF_MODE(insn->code) == BPF_PROBE_MEM ||
 			    BPF_MODE(insn->code) == BPF_PROBE_MEMSX) {
 				/* Conservatively check that src_reg + insn->off is a kernel address:
@@ -2498,6 +2608,15 @@ populate_extable:
 				start_of_ldx = prog;
 				end_of_jmp[-1] = start_of_ldx - end_of_jmp;
 			}
+#else
+			/*
+			 * UML: no VSYSCALL_ADDR or x86 layout constants to check
+			 * against; probe-mem range check is unwired for now (same
+			 * class as ex_handler_bpf). Keep start_of_ldx defined for
+			 * the extable-emission code below.
+			 */
+			start_of_ldx = prog;
+#endif
 			if (BPF_MODE(insn->code) == BPF_PROBE_MEMSX ||
 			    BPF_MODE(insn->code) == BPF_MEMSX)
 				emit_ldsx(&prog, BPF_SIZE(insn->code), dst_reg, src_reg, insn_off);
@@ -3572,9 +3691,21 @@ static int __arch_prepare_bpf_trampoline(struct bpf_tramp_image *im, void *rw_im
 		/* skip patched call instruction and point orig_call to actual
 		 * body of the kernel function.
 		 */
+#ifdef CONFIG_UML
+		/*
+		 * The UML -mcmodel=large fentry site is 13 bytes of
+		 * movabs $__fentry__, %r10; call *%r10 (see the UML
+		 * bpf_arch_text_poke above); is_endbr() is inert without
+		 * X86_KERNEL_IBT, so check the endbr64 bytes directly.
+		 */
+		if (!memcmp(orig_call, uml_endbr64, sizeof(uml_endbr64)))
+			orig_call += sizeof(uml_endbr64);
+		orig_call += 13;
+#else
 		if (is_endbr(orig_call))
 			orig_call += ENDBR_INSN_SIZE;
 		orig_call += X86_PATCH_SIZE;
+#endif
 	}
 
 	prog = rw_image;
@@ -4183,7 +4314,17 @@ bool bpf_jit_supports_subprog_tailcalls(void)
 
 bool bpf_jit_supports_percpu_insn(void)
 {
+#ifdef CONFIG_UML
+	/*
+	 * The JIT lowers percpu accesses to gs:[this_cpu_off]; a UML
+	 * kernel process has the host's TLS in gs, so the inlined lookup
+	 * computes a wild address and percpu updates silently never land.
+	 * The C helper path is correct under UML's percpu model.
+	 */
+	return false;
+#else
 	return true;
+#endif
 }
 
 void bpf_jit_free(struct bpf_prog *prog)

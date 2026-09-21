@@ -13,7 +13,35 @@ config UML_X86
 	select ARCH_USE_QUEUED_SPINLOCKS
 	select DCACHE_WORD_ACCESS
 	select HAVE_EFFICIENT_UNALIGNED_ACCESS
+	select HAVE_EBPF_JIT if 64BIT
+	select ARCH_WANT_DEFAULT_BPF_JIT if 64BIT
+	select HAVE_CMPXCHG_DOUBLE if 64BIT
+	select HAVE_ALIGNED_STRUCT_PAGE if 64BIT
 	select UML_SUBARCH_SUPPORTS_SMP if X86_CX8
+	# -pg -mfentry call sites + a ret-only __fentry__ stub give BPF
+	# fentry/fexit their patch sites (17 bytes under -mcmodel=large:
+	# endbr64 + movabs + indirect call); ftrace_location() stays 0
+	# (no HAVE_DYNAMIC_FTRACE*), so attach uses bpf_arch_text_poke.
+	select HAVE_FUNCTION_TRACER if 64BIT
+	select HAVE_FENTRY if 64BIT
+	# Kprobes reuse the x86 kprobes core via subarch-y: the arm path
+	# is int3 plus an out-of-line single-step, relayed from the host
+	# SIGTRAP handler. Not HAVE_KPROBES_ON_FTRACE: that wants
+	# DYNAMIC_FTRACE_WITH_REGS, and um has no dynamic-ftrace backend
+	# (see above).
+	select HAVE_KPROBES if 64BIT
+	select HAVE_REGS_AND_STACK_ACCESS_API if 64BIT
+	select HAVE_FUNCTION_ARG_ACCESS_API if 64BIT
+	# The rethook trampoline in arch/x86/um/rethook.c gives KRETPROBES
+	# via KRETPROBE_ON_RETHOOK (no legacy asm kretprobe trampoline
+	# exists on modern x86 to reuse).
+	select HAVE_RETHOOK if 64BIT
+
+# UML/x86 reuses arch/x86/kernel/uprobes.c via subarch-y; the guest-user
+# int3/single-step relay arrives as SIGTRAP through the skas trap path.
+config ARCH_SUPPORTS_UPROBES
+	def_bool y
+	depends on UML_X86 && 64BIT
 
 config 64BIT
 	bool "64-bit kernel" if "$(SUBARCH)" = "x86"

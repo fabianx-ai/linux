@@ -113,8 +113,37 @@ endef
 archheaders:
 	$(Q)$(MAKE) -f $(srctree)/Makefile ARCH=$(HEADER_ARCH) asm-generic archheaders
 
-archprepare:
+###
+# <asm/cpufeaturemasks.h> generation (shared rule; ARCH=um never runs
+# x86's archprepare, so the masks are generated under arch/um instead).
+
+cpufeaturemasks.hdr := arch/um/include/generated/asm/cpufeaturemasks.h
+include $(srctree)/arch/x86/Makefile.cpufeaturemasks
+
+archprepare: $(cpufeaturemasks.hdr)
 	$(Q)$(MAKE) $(build)=$(HOST_DIR)/um include/generated/user_constants.h
+
+###
+# inat-tables.c for the subarch-built x86 instruction decoder (uprobes).
+# Same generator as arch/x86/lib/Makefile; ARCH=um never runs that
+# Makefile, so produce the (arch-constant) table here. The table is
+# generated into the objtree, like arch/x86/lib/Makefile does (the
+# srctree may be read-only); arch/x86/um/Makefile puts the output
+# directory on the include path for the decoder objects, because
+# arch/x86/lib/inat.c pulls the table in via a quoted include that
+# otherwise resolves only next to the source file.
+
+inat_tables_script := $(srctree)/arch/x86/tools/gen-insn-attr-x86.awk
+inat_tables_maps := $(srctree)/arch/x86/lib/x86-opcode-map.txt
+inat_tables.c := $(objtree)/arch/x86/lib/inat-tables.c
+
+quiet_cmd_inat_tables = GEN     $@
+      cmd_inat_tables = mkdir -p $(dir $@); $(AWK) -f $(inat_tables_script) $(inat_tables_maps) > $@
+
+$(inat_tables.c): $(inat_tables_script) $(inat_tables_maps)
+	$(call cmd,inat_tables)
+
+archprepare: $(inat_tables.c)
 
 LINK-$(CONFIG_LD_SCRIPT_STATIC) += -static
 LINK-$(CONFIG_LD_SCRIPT_DYN) += -no-pie

@@ -7,6 +7,9 @@ config UML
 	default y
 	select ARCH_DISABLE_KASAN_INLINE if STATIC_LINK
 	select ARCH_NEEDS_DEFER_KASAN if STATIC_LINK
+	select ARCH_HAS_SET_MEMORY
+	select ARCH_SUPPORTS_SCHED_CLUSTER if SMP
+	select GENERIC_TRACER
 	select ARCH_WANTS_DYNAMIC_TASK_STRUCT
 	select ARCH_HAS_CACHE_LINE_SIZE
 	select ARCH_HAS_CPU_FINALIZE_INIT
@@ -42,6 +45,7 @@ config UML
 	select ARCH_HAS_UBSAN
 	select HAVE_ARCH_TRACEHOOK
 	select HAVE_SYSCALL_TRACEPOINTS
+	select HAVE_PERF_EVENTS
 	select THREAD_INFO_IN_TASK
 	select SPARSE_IRQ
 	select MMU_GATHER_RCU_TABLE_FREE
@@ -304,3 +308,7 @@ menu "Power management options"
 source "kernel/power/Kconfig"
 
 endmenu
+
+# X86_REQUIRED_FEATURE_*/X86_DISABLED_FEATURE_* consumed by
+# <asm/cpufeaturemasks.h> generation (see arch/um/Makefile)
+source "arch/x86/Kconfig.cpufeatures"
