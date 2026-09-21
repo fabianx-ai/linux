@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+guest_init
+guest_core
+guest_module
+guest_bench
+guest_hostfs
