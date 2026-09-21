@@ -10,10 +10,19 @@
 #include <sysdep/ptrace_user.h>
 #include <generated/asm-offsets.h>
 #include <linux/stddef.h>
+#include <linux/stringify.h>
 #include <asm/prctl.h>
 
 #define STUB_MMAP_NR __NR_mmap
+
+/* TLS restore syscall the stub filter must allow (backend-provided) */
+#define STUB_TLS_SYSCALL_NR __NR_arch_prctl
 #define MMAP_OFFSET(o) (o)
+
+/* Backend mmap invocation: default direct 6-arg syscall form. */
+#define STUB_MMAP_CALL(res, addr, len, prot, flags, fd, off)		\
+	((res) = stub_syscall6(STUB_MMAP_NR, (addr), (len), (prot),	\
+			       (flags), (fd), (off)))
 
 #define __syscall_clobber "r11","rcx","memory"
 #define __syscall "syscall"
@@ -128,13 +137,14 @@ static __always_inline void *get_stub_data(void)
 	return (void *)ret;
 }
 
-#define stub_start(fn)							\
-	asm volatile (							\
-		"subq %0,%%rsp ;"					\
-		"movq %1,%%rax ;"					\
-		"call *%%rax ;"						\
-		:: "i" (STUB_SIZE),					\
-		   "i" (&fn))
+/*
+ * Entry instructions of the stub_exe binary, emitted from file-scope
+ * asm in stub_exe.c: move the stack pointer down past the future stub
+ * mappings, then call real_init().
+ */
+#define STUB_EXE_START							\
+	"	subq	$" __stringify(STUB_SIZE) ", %rsp\n"		\
+	"	call	real_init\n"
 
 static __always_inline void
 stub_seccomp_restore_state(struct stub_data_arch *arch)

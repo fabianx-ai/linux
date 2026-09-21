@@ -8,9 +8,7 @@
 #include <linux/seccomp.h>
 #include <generated/asm-offsets.h>
 
-void _start(void);
-
-noinline static void real_init(void)
+static noinline void __attribute__((used)) real_init(void)
 {
 	struct stub_init_data init_data;
 	unsigned long res;
@@ -53,18 +51,18 @@ noinline static void real_init(void)
 		stub_syscall3(__NR_fcntl, 0, F_SETFL, O_NONBLOCK);
 
 	/* map stub code + data */
-	res = stub_syscall6(STUB_MMAP_NR,
-			    init_data.stub_start, UM_KERN_PAGE_SIZE,
-			    PROT_READ | PROT_EXEC, MAP_FIXED | MAP_SHARED,
-			    init_data.stub_code_fd, init_data.stub_code_offset);
+	STUB_MMAP_CALL(res,
+		       init_data.stub_start, UM_KERN_PAGE_SIZE,
+		       PROT_READ | PROT_EXEC, MAP_FIXED | MAP_SHARED,
+		       init_data.stub_code_fd, init_data.stub_code_offset);
 	if (res != init_data.stub_start)
 		stub_syscall1(__NR_exit, 11);
 
-	res = stub_syscall6(STUB_MMAP_NR,
-			    init_data.stub_start + UM_KERN_PAGE_SIZE,
-			    STUB_DATA_PAGES * UM_KERN_PAGE_SIZE,
-			    PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED,
-			    init_data.stub_data_fd, init_data.stub_data_offset);
+	STUB_MMAP_CALL(res,
+		       init_data.stub_start + UM_KERN_PAGE_SIZE,
+		       STUB_DATA_PAGES * UM_KERN_PAGE_SIZE,
+		       PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED,
+		       init_data.stub_data_fd, init_data.stub_data_offset);
 	if (res != init_data.stub_start + UM_KERN_PAGE_SIZE)
 		stub_syscall1(__NR_exit, 12);
 
@@ -176,13 +174,8 @@ noinline static void real_init(void)
 				 4, 0),
 			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_munmap,
 				 3, 0),
-#ifdef __i386__
-			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_set_thread_area,
+			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, STUB_TLS_SYSCALL_NR,
 				 2, 0),
-#else
-			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_arch_prctl,
-				 2, 0),
-#endif
 			BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_rt_sigreturn,
 				 1, 0),
 
@@ -214,17 +207,27 @@ noinline static void real_init(void)
 	__builtin_unreachable();
 }
 
-__attribute__((naked)) void _start(void)
-{
-	/*
-	 * Since the stack after exec() starts at the top-most address,
-	 * but that's exactly where we also want to map the stub data
-	 * and code, this must:
-	 *  - push the stack by 1 code and STUB_DATA_PAGES data pages
-	 *  - call real_init()
-	 * This way, real_init() can use the stack normally, while the
-	 * original stack further down (higher address) will become
-	 * inaccessible after the mmap() calls above.
-	 */
-	stub_start(real_init);
-}
+/*
+ * Since the stack after exec() starts at the top-most address, but
+ * that is exactly where the stub code and data must be mapped, the
+ * entry point must:
+ *  - push the stack down by 1 code and STUB_DATA_PAGES data pages
+ *  - call real_init()
+ * This way real_init() can use the stack normally, while the original
+ * stack further up (at higher addresses) becomes inaccessible after
+ * the mmap() calls it makes.
+ *
+ * A naked C function is not a reliable container for these
+ * instructions: only some GCC targets honor the attribute (aarch64
+ * GCC warns and ignores it), and an ignored attribute means a
+ * compiler-emitted prologue touches the stack before it is moved.
+ * Each backend provides the entry as real assembly (STUB_EXE_START
+ * in sysdep/stub.h).
+ */
+__asm__(
+	".pushsection .text\n"
+	".global _start\n"
+	"_start:\n"
+	STUB_EXE_START
+	".popsection\n"
+);

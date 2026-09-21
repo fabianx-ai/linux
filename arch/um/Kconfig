@@ -19,7 +19,6 @@ config UML
 	select ARCH_HAS_STRNLEN_USER
 	select ARCH_HAS_STRICT_KERNEL_RWX
 	select HAVE_ARCH_AUDITSYSCALL
-	select HAVE_ARCH_KASAN if X86_64
 	select HAVE_ARCH_KASAN_VMALLOC if HAVE_ARCH_KASAN
 	select HAVE_ARCH_SECCOMP_FILTER
 	select HAVE_ASM_MODVERSIONS
@@ -87,6 +86,12 @@ config HZ
 	default 100
 
 config UML_SUBARCH_SUPPORTS_SMP
+	bool
+
+# Selected by backends that provide their own memcpy (native lib reuse
+# or generic lib/string.c with no __HAVE_ARCH_MEMCPY); gates the
+# user_syms.c duplicate exports.
+config UML_SUBARCH_MEMCPY
 	bool
 
 config SMP
@@ -198,7 +203,7 @@ config MCONSOLE
 	default y
 	help
 	  The user mode linux management console is a low-level interface to
-	  the kernel, somewhat like the i386 SysRq interface.  Since there is
+	  the kernel, somewhat like the native SysRq interface.  Since there is
 	  a full-blown operating system running under every user mode linux
 	  instance, there is much greater flexibility possible than with the
 	  SysRq mechanism.
