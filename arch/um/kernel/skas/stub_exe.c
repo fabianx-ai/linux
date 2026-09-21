@@ -26,7 +26,7 @@ static noinline void __attribute__((used)) real_init(void)
 		unsigned long long sa_mask;
 	} sa = {
 		/* Need to set SA_RESTORER (but the handler never returns) */
-		.sa_flags = SA_ONSTACK | SA_NODEFER | SA_SIGINFO | 0x04000000,
+		.sa_flags = SA_ONSTACK | SA_NODEFER | SA_SIGINFO | UM_SA_RESTORER,
 	};
 
 	/* set a nice name */
@@ -49,6 +49,13 @@ static noinline void __attribute__((used)) real_init(void)
 		stub_syscall1(__NR_close, 0);
 	else
 		stub_syscall3(__NR_fcntl, 0, F_SETFL, O_NONBLOCK);
+
+	/*
+	 * Whatever this architecture has to settle in a fresh stub,
+	 * before the seccomp filter is installed and so still able to
+	 * make any syscall.
+	 */
+	stub_arch_init(init_data.arch_flags);
 
 	/* map stub code + data */
 	STUB_MMAP_CALL(res,

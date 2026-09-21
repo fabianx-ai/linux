@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
+#include <poll.h>
 #include <asm/unistd.h>
 #include <as-layout.h>
 #include <init.h>
@@ -64,6 +65,16 @@ static int ptrace_dump_regs(int pid)
  */
 #define STUB_SIG_MASK ((1 << SIGALRM) | (1 << SIGWINCH))
 
+/*
+ * Constant form of "does this architecture hide a register at a
+ * syscall stop", usable inside an if condition.
+ */
+#ifdef UM_SYSCALL_STOP_HIDES_REG
+#define UM_SYSCALL_STOP_HIDDEN 1
+#else
+#define UM_SYSCALL_STOP_HIDDEN 0
+#endif
+
 /* Signals that the stub will finish with - anything else is an error */
 #define STUB_DONE_MASK (1 << SIGTRAP)
 
@@ -98,6 +109,32 @@ bad_wait:
 	printk(UM_KERN_ERR "%s : failed to wait for SIGTRAP, pid = %d, n = %d, errno = %d, status = 0x%x\n",
 	       __func__, pid, n, errno, status);
 	fatal_sigsegv();
+}
+
+/*
+ * Is this stub process actually gone? kill(pid, 0) is not enough: an
+ * unreaped zombie still answers it, and a dead stub on a !SMP guest is
+ * exactly that: nothing reaps it while the only kernel thread is
+ * stuck in the futex wait (mm_sigchld_irq() never gets its SIGCHLD).
+ * A pidfd becomes pollable when the task exits, zombie or not, and
+ * does not depend on the caller being the parent.
+ */
+static bool stub_is_dead(int pid)
+{
+	struct pollfd pfd = { .events = POLLIN };
+	struct timespec ts = { };
+	int fd, res, saved;
+
+	fd = syscall(__NR_pidfd_open, pid, 0);
+	if (fd < 0)
+		return errno == ESRCH;
+
+	pfd.fd = fd;
+	res = syscall(__NR_ppoll, &pfd, 1, &ts, NULL);
+	saved = errno;
+	os_close_file(fd);
+	errno = saved;
+	return res > 0 && (pfd.revents & POLLIN);
 }
 
 void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
@@ -146,6 +183,9 @@ void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 		}
 
 		do {
+			struct timespec ts = { .tv_sec = 5 };
+			int pid;
+
 			/*
 			 * We need to check whether the child is still alive
 			 * before and after the FUTEX_WAIT call. Before, in
@@ -157,12 +197,34 @@ void wait_stub_done_seccomp(struct mm_id *mm_idp, int running, int wait_sigsys)
 			 * Either way, if PID is negative, then we have no
 			 * choice but to kill the task.
 			 */
-			if (__READ_ONCE(mm_idp->pid) < 0)
+			pid = __READ_ONCE(mm_idp->pid);
+			if (pid < 0)
 				goto out_kill;
 
 			ret = syscall(__NR_futex, &data->futex,
 				      FUTEX_WAIT, FUTEX_IN_CHILD,
-				      NULL, NULL, 0);
+				      &ts, NULL, 0);
+			if (ret < 0 && errno == ETIMEDOUT) {
+				/*
+				 * Bounded-wait backstop: on !SMP the
+				 * futex wake in mm_sigchld_irq() is
+				 * compiled out, so a dead stub is only
+				 * noticed here if a signal happens to
+				 * interrupt the wait (EINTR) and its
+				 * IRQ gets to run; without that rescue
+				 * the guest hangs here forever. Probe
+				 * the stub; only a genuinely dead one
+				 * breaks the wait, so this can never
+				 * fire spuriously.
+				 */
+				if (stub_is_dead(pid)) {
+					printk(UM_KERN_ERR "%s : stub pid %d died during futex wait\n",
+					       __func__, pid);
+					goto out_kill;
+				}
+				/* Alive but slow to answer; keep waiting. */
+				continue;
+			}
 			if (ret < 0 && errno != EINTR && errno != EAGAIN) {
 				printk(UM_KERN_ERR "%s : FUTEX_WAIT failed, errno = %d\n",
 				       __func__, errno);
@@ -259,6 +321,7 @@ static int userspace_tramp(void *data)
 	unsigned long long offset;
 	struct stub_init_data init_data = {
 		.seccomp = using_seccomp,
+		.arch_flags = stub_arch_init_flags,
 		.stub_start = STUB_START,
 	};
 	int ret;
@@ -391,6 +454,16 @@ __initcall(init_stub_exe_fd);
 
 int using_seccomp;
 
+/* Backend-interpreted bits for stub_arch_init(); see skas.h. */
+unsigned long stub_arch_init_flags;
+
+/*
+ * Assume the host has PTRACE_SYSEMU until check_sysemu() says
+ * otherwise; see skas.h. arm64 hosts older than 5.3 flip it to 0.
+ */
+int have_ptrace_sysemu = 1;
+int syscall_cancel_nr = -1;
+
 /**
  * start_userspace() - prepare a new userspace process
  * @mm_id: The corresponding struct mm_id
@@ -505,6 +578,32 @@ out_close:
 
 static int unscheduled_userspace_iterations;
 extern unsigned long tt_extra_sched_jiffies;
+
+#ifdef UM_SYSCALL_TRAP_INSN
+/*
+ * Is the guest about to execute the instruction that enters the
+ * kernel?
+ *
+ * Only consulted while single-stepping a guest on a host without
+ * PTRACE_SYSEMU, which is a debugger path, so the extra ptrace call
+ * per step costs nothing that matters. A failed read is reported as
+ * "not a syscall": the instruction is about to be executed by the
+ * guest either way, and if it is unreadable the single-step will fault
+ * on it and be reported normally, which is a better outcome than
+ * refusing to step.
+ */
+static int at_syscall_insn(int pid, unsigned long pc)
+{
+	long word;
+
+	errno = 0;
+	word = ptrace(PTRACE_PEEKTEXT, pid, (void *)pc, 0);
+	if (word == -1 && errno)
+		return 0;
+
+	return (unsigned int)word == UM_SYSCALL_TRAP_INSN;
+}
+#endif
 
 void userspace(struct uml_pt_regs *regs)
 {
@@ -641,10 +740,44 @@ void userspace(struct uml_pt_regs *regs)
 				fatal_sigsegv();
 			}
 
-			if (singlestepping())
+			/*
+			 * Without PTRACE_SYSEMU the guest runs under plain
+			 * PTRACE_SYSCALL and the syscall is cancelled or
+			 * substituted at the entry stop below, which reaches
+			 * the same place: the guest's call does not execute
+			 * and the guest resumes past it with whatever UML
+			 * puts in the return register.
+			 *
+			 * On an architecture without UM_SYSCALL_TRAP_INSN,
+			 * forcing this path (nosysemu) degrades guest
+			 * single-stepping to PTRACE_SYSCALL: with no way to
+			 * recognize the kernel-entry instruction, stepping
+			 * stays at syscall granularity. Guest single-step is
+			 * only the debugger-switch path, and coarse stepping
+			 * there is preferred over ever letting a guest
+			 * syscall run on the host.
+			 */
+			if (!have_ptrace_sysemu) {
+				op = PTRACE_SYSCALL;
+#ifdef UM_SYSCALL_TRAP_INSN
+				/*
+				 * Single-stepping still has to step. The one
+				 * instruction that must not be stepped is the
+				 * one that enters the kernel: stepping it
+				 * would run the guest's syscall on the host.
+				 * Take the syscall stop for that instruction
+				 * instead, so it can be cancelled like any
+				 * other.
+				 */
+				if (singlestepping() &&
+				    !at_syscall_insn(pid, regs->gp[REGS_IP_INDEX]))
+					op = PTRACE_SINGLESTEP;
+#endif
+			} else if (singlestepping()) {
 				op = PTRACE_SYSEMU_SINGLESTEP;
-			else
+			} else {
 				op = PTRACE_SYSEMU;
+			}
 
 			if (ptrace(op, pid, 0, 0)) {
 				printk(UM_KERN_ERR "%s - ptrace continue failed, op = %d, errno = %d\n",
@@ -670,6 +803,131 @@ void userspace(struct uml_pt_regs *regs)
 				printk(UM_KERN_ERR "%s -  get_fp_registers failed, errno = %d\n",
 				       __func__, errno);
 				fatal_sigsegv();
+			}
+
+			/*
+			 * Two independent reasons to single-step off a
+			 * syscall-entry stop before resuming the loop:
+			 *
+			 * On an architecture with UM_SYSCALL_STOP_HIDES_REG,
+			 * one register is not visible at a syscall stop and
+			 * cannot be written there either; see
+			 * <sysdep/ptrace_user.h>. Everything else has just
+			 * been read correctly, so step off the stop and pick
+			 * up that one register alone.
+			 *
+			 * The step runs no guest code: the syscall stays
+			 * emulated away and the program counter does not move.
+			 * It is still not a free stop to stand on, because it
+			 * arrives as a forced SIGTRAP, so the host's signal
+			 * path runs and clears the recorded syscall number,
+			 * and would rewind the program counter if the first
+			 * syscall argument happened to look like -ERESTARTSYS.
+			 * Taking only the hidden register from here, and
+			 * everything else from the syscall stop above, is
+			 * immune to both: whatever the host did to the rest is
+			 * overwritten by the register write that resumes this
+			 * task.
+			 *
+			 * The other half of the reason to step is the write:
+			 * the task is left parked on a stop where the full
+			 * register set can be installed, which is what a guest
+			 * thread switch needs and what a syscall stop silently
+			 * refuses.
+			 *
+			 * Without PTRACE_SYSEMU the step is needed on every
+			 * architecture: this stop is a real syscall entry, so
+			 * the call must be cancelled or substituted first and
+			 * the (defused) syscall then stepped over, which also
+			 * consumes what would otherwise surface as a
+			 * syscall-exit stop on the next resume.
+			 */
+			if (WIFSTOPPED(status) &&
+			    WSTOPSIG(status) == (SIGTRAP | 0x80) &&
+			    (!have_ptrace_sysemu || UM_SYSCALL_STOP_HIDDEN)) {
+				int sstatus, tries = 0;
+
+				/*
+				 * syscall_cancel_nr is -1, the documented
+				 * "run nothing" value, unless the boot probe
+				 * found the host refuses it, in which case it
+				 * names a harmless syscall to run in the
+				 * guest call's place. See check_sysemu(). The
+				 * registers were read above, so the syscall
+				 * number UML needs has already been taken and
+				 * overwriting it here loses nothing.
+				 */
+				if (!have_ptrace_sysemu &&
+				    sysdep_ptrace_pokeuser(pid,
+							   PT_SYSCALL_NR_OFFSET,
+							   syscall_cancel_nr)) {
+					printk(UM_KERN_ERR "%s - failed to cancel a guest syscall, errno = %d\n",
+					       __func__, errno);
+					fatal_sigsegv();
+				}
+
+				while (1) {
+					if (ptrace(PTRACE_SINGLESTEP, pid, 0, 0)) {
+						printk(UM_KERN_ERR "%s - failed to step off a syscall stop, errno = %d\n",
+						       __func__, errno);
+						fatal_sigsegv();
+					}
+
+					CATCH_EINTR(err = waitpid(pid, &sstatus,
+								  WUNTRACED | __WALL));
+					if (err < 0) {
+						printk(UM_KERN_ERR "%s - wait after step failed, errno = %d\n",
+						       __func__, errno);
+						fatal_sigsegv();
+					}
+
+					if (WIFSTOPPED(sstatus) &&
+					    WSTOPSIG(sstatus) == SIGTRAP)
+						break;
+
+					/*
+					 * The stub can be interrupted here, and
+					 * wait_stub_done() tolerates the same
+					 * two signals for the same reason.
+					 * Neither is for the guest: the stub
+					 * installs no handler for either in
+					 * ptrace mode, so delivering one would
+					 * kill it. The step has not happened
+					 * yet, so drop the signal and step
+					 * again, bounded so a stub that will
+					 * never trap still fails rather than
+					 * spins.
+					 */
+					if (WIFSTOPPED(sstatus) &&
+					    ((1 << WSTOPSIG(sstatus)) & STUB_SIG_MASK) &&
+					    ++tries < 16)
+						continue;
+
+					/*
+					 * Anything else means the assumption
+					 * above no longer holds. Fail loudly
+					 * rather than run a guest on registers
+					 * that are quietly wrong.
+					 */
+					printk(UM_KERN_ERR "%s - unexpected status 0x%x stepping off a syscall stop\n",
+					       __func__, sstatus);
+					fatal_sigsegv();
+				}
+
+#ifdef UM_SYSCALL_STOP_HIDES_REG
+				{
+					unsigned long hidden[UM_GP_SLOTS];
+
+					if (ptrace_getregs(pid, hidden)) {
+						printk(UM_KERN_ERR "%s - ptrace_getregs after step failed, errno = %d\n",
+						       __func__, errno);
+						fatal_sigsegv();
+					}
+
+					regs->gp[UM_SYSCALL_STOP_HIDDEN_REG] =
+						hidden[UM_SYSCALL_STOP_HIDDEN_REG];
+				}
+#endif
 			}
 
 			if (WIFSTOPPED(status)) {
@@ -731,10 +989,16 @@ void userspace(struct uml_pt_regs *regs)
 			case SIGALRM:
 				break;
 			case SIGIO:
-			case SIGILL:
 			case SIGBUS:
 			case SIGFPE:
 			case SIGWINCH:
+				block_signals_trace();
+				(*sig_info[sig])(sig, (struct siginfo *)si, regs, NULL);
+				unblock_signals_trace();
+				break;
+			case SIGILL:
+				if (arch_sigill_fixup(regs))
+					break;
 				block_signals_trace();
 				(*sig_info[sig])(sig, (struct siginfo *)si, regs, NULL);
 				unblock_signals_trace();
@@ -756,8 +1020,7 @@ void userspace(struct uml_pt_regs *regs)
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {
 	(*buf)[0].JB_IP = (unsigned long) handler;
-	(*buf)[0].JB_SP = (unsigned long) stack + UM_THREAD_SIZE -
-		sizeof(void *);
+	(*buf)[0].JB_SP = UM_THREAD_START_SP(stack);
 }
 
 #define INIT_JMP_NEW_THREAD 0
@@ -797,8 +1060,7 @@ int start_idle_thread(void *stack, jmp_buf *switch_buf)
 	switch (n) {
 	case INIT_JMP_NEW_THREAD:
 		(*switch_buf)[0].JB_IP = (unsigned long) uml_finishsetup;
-		(*switch_buf)[0].JB_SP = (unsigned long) stack +
-			UM_THREAD_SIZE - sizeof(void *);
+		(*switch_buf)[0].JB_SP = UM_THREAD_START_SP(stack);
 		break;
 	case INIT_JMP_CALLBACK:
 		(*cb_proc)(cb_arg);

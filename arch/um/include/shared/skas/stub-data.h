@@ -20,6 +20,14 @@
 struct stub_init_data {
 	int seccomp;
 
+	/*
+	 * Backend-interpreted bits, consumed by stub_arch_init() in the
+	 * freshly exec'd stub before the seccomp filter is installed.
+	 * Filled from stub_arch_init_flags, which a backend's host
+	 * probe may set at boot (arm64: STUB_INIT_PAC_OFF).
+	 */
+	unsigned long arch_flags;
+
 	unsigned long stub_start;
 
 	int stub_code_fd;
@@ -69,8 +77,9 @@ struct stub_data {
 	/* seccomp architecture specific state restore */
 	struct stub_data_arch arch_data;
 
-	/* Stack for our signal handlers and for calling into . */
-	unsigned char sigstack[UM_KERN_PAGE_SIZE] __aligned(UM_KERN_PAGE_SIZE);
+	/* Stack for our signal handlers and for calling into .
+	 * Sized per backend: arm64's signal frame exceeds one page. */
+	unsigned char sigstack[UM_STUB_SIGSTACK_PAGES * UM_KERN_PAGE_SIZE] __aligned(UM_KERN_PAGE_SIZE);
 };
 
 #endif
