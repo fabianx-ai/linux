@@ -49,6 +49,13 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
 	mutex_init(&mm->context.turnstile);
 	spin_lock_init(&mm->context.sync_tlb_lock);
 
+	/*
+	 * Fault-around detector starts cold: prefault_level is used as an
+	 * array index in trap.c, so it must never be garbage.
+	 */
+	mm->context.prefault_next = 0;
+	mm->context.prefault_level = 0;
+
 	stack = __get_free_pages(GFP_KERNEL | __GFP_ZERO,
 				 get_order(STUB_DATA_PAGES * UM_KERN_PAGE_SIZE));
 	if (stack == 0)
@@ -78,6 +85,39 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
 	return ret;
 }
 
+/*
+ * A stub that has been killed but not yet reaped, and the resources that
+ * cannot be released until the host says it is gone. destroy_context() cannot
+ * keep a pointer into mm->context for this: the mm_struct is freed as soon as
+ * it returns, so the few fields that matter are copied out.
+ */
+struct dying_stub {
+	struct list_head list;
+	int pid;
+	unsigned long stack;
+	int sock;
+};
+
+static LIST_HEAD(dying_stubs);
+
+/* Release what destroy_context() deferred, now that @pid is confirmed dead. */
+static void reap_dying_stub(pid_t pid)
+{
+	struct dying_stub *d, *tmp;
+
+	list_for_each_entry_safe(d, tmp, &dying_stubs, list) {
+		if (d->pid != pid)
+			continue;
+		list_del(&d->list);
+		if (d->sock)
+			os_close_file(d->sock);
+		free_pages(d->stack,
+			   get_order(STUB_DATA_PAGES * UM_KERN_PAGE_SIZE));
+		kfree(d);
+		return;
+	}
+}
+
 void destroy_context(struct mm_struct *mm)
 {
 	struct mm_context *mmu = &mm->context;
@@ -99,6 +139,44 @@ void destroy_context(struct mm_struct *mm)
 	scoped_guard(spinlock_irqsave, &mm_list_lock)
 		list_del(&mm->context.list);
 
+	/*
+	 * Killing a stub is cheap; waiting for it to die is not, and this path
+	 * runs twice for every guest execve. os_kill_ptraced_process() with
+	 * reap_child set blocks in waitpid() with signals off, so the whole
+	 * kernel stops for as long as the host takes to reap -- pure reap
+	 * latency, tens of microseconds, independent of the number of
+	 * mappings.
+	 *
+	 * The wait is not gratuitous, though, which is why this is not simply
+	 * dropped: the free_pages() below hands back the pages the stub shares
+	 * with us, and doing that while the stub is still alive is a
+	 * use-after-free on the other side -- all the more so now that a
+	 * spinning stub may be polling the handoff word in those pages when
+	 * the kill arrives.
+	 *
+	 * So keep the ordering and lose the wait: hand the pid and its pages
+	 * to the SIGCHLD reaper, which already runs and already knows how to
+	 * collect dead stubs, and let it free them once the host confirms the
+	 * process is gone. In ptrace mode there is no SIGCHLD handler
+	 * registered at all (see arch/um/os-Linux/signal.c), so there is
+	 * nobody to hand to and the synchronous path stays.
+	 */
+	if (mmu->id.pid > 0 && using_seccomp) {
+		struct dying_stub *d = kmalloc(sizeof(*d), GFP_ATOMIC);
+
+		if (d) {
+			d->pid = mmu->id.pid;
+			d->stack = mmu->id.stack;
+			d->sock = mmu->id.sock;
+			scoped_guard(spinlock_irqsave, &mm_list_lock)
+				list_add(&d->list, &dying_stubs);
+			os_kill_ptraced_process(mmu->id.pid, 0);
+			mmu->id.pid = -1;
+			return;
+		}
+		/* Out of memory: do it the slow, safe way below instead. */
+	}
+
 	if (mmu->id.pid > 0) {
 		os_kill_ptraced_process(mmu->id.pid, 1);
 		mmu->id.pid = -1;
@@ -119,6 +197,14 @@ static irqreturn_t mm_sigchld_irq(int irq, void* dev)
 
 	while ((pid = os_reap_child()) > 0) {
 		/*
+		 * Most reaped children are stubs destroy_context() killed and
+		 * handed over rather than waited for. Release those first; the
+		 * search below is for a stub that died without being asked to,
+		 * and a handed-over one is no longer on mm_list to be found.
+		 */
+		reap_dying_stub(pid);
+
+		/*
 		* A child died, check if we have an MM with the PID. This is
 		* only relevant in SECCOMP mode (as ptrace will fail anyway).
 		*
@@ -130,23 +216,42 @@ static irqreturn_t mm_sigchld_irq(int irq, void* dev)
 				printk("Unexpectedly lost MM child! Affected tasks will segfault.");
 
 				/* Marks the MM as dead */
-				mm_context->id.pid = -1;
+				WRITE_ONCE(mm_context->id.pid, -1);
 
 				stub_data = (void *)mm_context->id.stack;
-				stub_data->futex = FUTEX_IN_KERN;
-#if IS_ENABLED(CONFIG_SMP)
-				os_futex_wake(&stub_data->futex);
-#else
 				/*
-				 * On !SMP the wake is skipped: a futex
-				 * waiter in wait_stub_done_seccomp() is
-				 * rescued by a signal interrupting its
-				 * wait (EINTR) or by the bounded-wait
-				 * liveness probe there (pidfd poll on
-				 * timeout), which turns a dead stub
-				 * into a loud failure either way.
+				 * The release orders the pid store above
+				 * before the handoff-word flip: it pairs with
+				 * the acquire load in the spinning reader in
+				 * wait_stub_done_seccomp(), which never enters
+				 * FUTEX_WAIT and so never sees the futex
+				 * syscall's ordering that a parked waiter
+				 * gets. A reader that observes FUTEX_IN_KERN
+				 * must also observe pid == -1, or it would
+				 * treat a dead stub as a live handoff.
 				 */
-#endif
+				smp_store_release(&stub_data->futex,
+						  FUTEX_IN_KERN);
+				/*
+				 * Unconditional on purpose -- the waiter-bit
+				 * wake elision must never be used on this
+				 * path. The waiter can be anywhere between
+				 * observing the word and parking, and a dead
+				 * stub will never issue another handoff to
+				 * correct a skipped wake: a spurious
+				 * FUTEX_WAKE here is noise, a missed one
+				 * leaves only the bounded-wait probe in
+				 * wait_stub_done_seccomp() (pidfd poll on
+				 * timeout) to catch the death, seconds
+				 * later. The store can race with the waiter's
+				 * fetch_or of its waiter bit; that is fine,
+				 * because FUTEX_WAIT revalidates the value it
+				 * was passed and this wake always fires.
+				 * (This was SMP-only before the waiter bit
+				 * existed; now the wake is the one kick that
+				 * works no matter where the waiter is.)
+				 */
+				os_futex_wake(&stub_data->futex);
 
 				/*
 				 * NOTE: Currently executing syscalls by
@@ -163,6 +268,20 @@ static irqreturn_t mm_sigchld_irq(int irq, void* dev)
 static int __init init_child_tracking(void)
 {
 	int err;
+
+	/*
+	 * The handoff word must own its cacheline outright: both sides may
+	 * poll it, and a field the peer writes sharing the line would turn
+	 * the spin in stub-futex.h into a stream of coherence misses. Assert
+	 * the layout so a reorder of struct stub_data cannot quietly regress
+	 * this -- it would still be correct, just slow in a way nothing
+	 * functional would ever catch.
+	 */
+	BUILD_BUG_ON(offsetof(struct stub_data, futex) % STUB_FUTEX_ALIGN != 0);
+	BUILD_BUG_ON(offsetofend(struct stub_data, syscall_data_len) >
+		     offsetof(struct stub_data, futex));
+	BUILD_BUG_ON(offsetof(struct stub_data, syscall_data) <
+		     offsetof(struct stub_data, futex) + STUB_FUTEX_ALIGN);
 
 	spin_lock_init(&mm_list_lock);
 	INIT_LIST_HEAD(&mm_list);
