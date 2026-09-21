@@ -18,7 +18,6 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-#include <asm/ldt.h>
 #include <asm/unistd.h>
 #include <init.h>
 #include <os.h>
@@ -233,11 +232,13 @@ static void __init check_ptrace(void)
 	check_sysemu();
 }
 
-extern unsigned long host_fp_size;
-extern unsigned long exec_regs[MAX_REG_NR];
-extern unsigned long *exec_fp_regs;
-
 __initdata static struct stub_data *seccomp_test_stub_data;
+
+/*
+ * A stack for the probe helper. Only a few frames deep, but it must be well
+ * clear of the shared area -- see the comment at the clone() below.
+ */
+#define HELPER_STACK_SIZE (64 * 1024)
 
 static void __init sigsys_handler(int sig, siginfo_t *info, void *p)
 {
@@ -270,8 +271,27 @@ static int __init seccomp_helper(void *data)
 	if (stub_syscall3(__NR_close_range, 1, ~0U, 0))
 		exit(1);
 
-	set_sigstack(seccomp_test_stub_data->sigstack,
-			sizeof(seccomp_test_stub_data->sigstack));
+	/*
+	 * Use the whole shared area as the signal stack, exactly as the real
+	 * stub does in stub_exe.c, rather than only the sigstack member.
+	 *
+	 * The member is one page, and one page is not necessarily a legal
+	 * alternate stack: the minimum is per-architecture, and arm64's
+	 * MINSIGSTKSZ is 5120 against the asm-generic 2048. With 4K pages
+	 * sigaltstack() therefore rejects it with ENOMEM and set_sigstack()
+	 * panics -- inside a CLONE_VFORK child that has just closed every file
+	 * descriptor above zero, so the message goes nowhere and the parent is
+	 * left blocked in clone() forever. The visible symptom is UML stopping
+	 * dead after "Checking that seccomp filters can be installed...", which
+	 * is how SECCOMP mode came to be silently unavailable on arm64.
+	 *
+	 * The handler still records mctx_offset relative to sigstack[0] and the
+	 * frame still lands in the last page, because the stack top is the same
+	 * address either way -- this only widens the range that sigaltstack is
+	 * told about.
+	 */
+	set_sigstack(seccomp_test_stub_data,
+			sizeof(*seccomp_test_stub_data));
 
 	sa.sa_flags = SA_ONSTACK | SA_NODEFER | SA_SIGINFO;
 	sa.sa_sigaction = (void *) sigsys_handler;
@@ -296,6 +316,7 @@ static bool __init init_seccomp(void)
 	int status;
 	int n;
 	unsigned long sp;
+	void *helper_stack;
 
 	/*
 	 * We check that we can install a seccomp filter and then exit(0)
@@ -311,10 +332,25 @@ static bool __init init_seccomp(void)
 				      PROT_READ | PROT_WRITE,
 				      MAP_SHARED | MAP_ANON, 0, 0);
 
-	/* Use the syscall data area as stack, we just need something */
-	sp = (unsigned long)&seccomp_test_stub_data->syscall_data +
-	     sizeof(seccomp_test_stub_data->syscall_data) -
-	     sizeof(void *);
+	/*
+	 * Give the helper a stack of its own rather than carving one out of the
+	 * shared area.
+	 *
+	 * The alternate signal stack registered for the probe lives in that
+	 * same shared area, and in the real stub it covers all of it. If the
+	 * helper's stack were inside the registered range,
+	 * sas_ss_flags() would report the thread as already running on the
+	 * alternate stack, SA_ONSTACK would be ignored, and the SIGSYS frame
+	 * would be pushed onto the helper's own few kilobytes instead -- which
+	 * on arm64 is not enough room for a signal frame and kills the helper
+	 * with SIGSEGV before the handler is ever entered.
+	 */
+	helper_stack = mmap(0, HELPER_STACK_SIZE, PROT_READ | PROT_WRITE,
+			    MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (helper_stack == MAP_FAILED)
+		fatal_perror("check_seccomp : stack mmap failed");
+
+	sp = ((unsigned long)helper_stack + HELPER_STACK_SIZE) & ~15UL;
 	pid = clone(seccomp_helper, (void *)sp, CLONE_VFORK | CLONE_VM, NULL);
 
 	if (pid < 0)
@@ -324,10 +360,36 @@ static bool __init init_seccomp(void)
 	if (n < 0)
 		fatal_perror("check_seccomp : waitpid failed");
 
+	munmap(helper_stack, HELPER_STACK_SIZE);
+
 	if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
 		struct uml_pt_regs *regs;
 		unsigned long fp_size;
 		int r;
+
+		/*
+		 * The handler reported where the host put the signal frame.
+		 * Everything downstream indexes sigstack[] with that offset, so
+		 * a frame that did not land inside sigstack[] is not merely a
+		 * failed probe -- it means this host's signal frames do not fit
+		 * the stub's data area, and running SECCOMP mode would have the
+		 * stub overwrite its own syscall queue and futex word every time
+		 * it takes a signal.
+		 *
+		 * This is a live concern rather than a theoretical one: an arm64
+		 * signal frame is around 4.6 KB against x86-64's ~1 KB, so with
+		 * 4 KB pages it does not fit in the single page sigstack[]
+		 * currently is. Refuse SECCOMP rather than corrupt the stub;
+		 * the ptrace path is unaffected.
+		 */
+		if (sizeof(seccomp_test_stub_data->sigstack) < sizeof(mcontext_t) ||
+		    seccomp_test_stub_data->mctx_offset >
+		    sizeof(seccomp_test_stub_data->sigstack) - sizeof(mcontext_t)) {
+			os_info("signal frame does not fit the stub data area\n");
+			munmap(seccomp_test_stub_data,
+			       sizeof(*seccomp_test_stub_data));
+			return false;
+		}
 
 		/* Fill in the host_fp_size from the mcontext. */
 		regs = calloc(1, sizeof(struct uml_pt_regs));
@@ -357,10 +419,36 @@ static bool __init init_seccomp(void)
 		return true;
 	}
 
-	if (WIFEXITED(status) && WEXITSTATUS(status) == 2)
-		os_info("missing\n");
-	else
-		os_info("error\n");
+	/*
+	 * Say which step failed. The helper runs with every file descriptor
+	 * above zero closed, so it cannot report anything itself, and a bare
+	 * "error" here is indistinguishable between "this host has no seccomp"
+	 * and "UML's own probe is broken" -- which is how a fixable bug in the
+	 * probe turned into SECCOMP mode simply never being available.
+	 */
+	if (WIFEXITED(status)) {
+		switch (WEXITSTATUS(status)) {
+		case 1:
+			os_info("no close_range\n");
+			break;
+		case 2:
+			os_info("missing\n");
+			break;
+		case 3:
+			os_info("filter rejected\n");
+			break;
+		case 4:
+			os_info("filter did not trap\n");
+			break;
+		default:
+			os_info("helper exited %d\n", WEXITSTATUS(status));
+			break;
+		}
+	} else if (WIFSIGNALED(status)) {
+		os_info("helper killed by signal %d\n", WTERMSIG(status));
+	} else {
+		os_info("error, status 0x%x\n", status);
+	}
 
 	munmap(seccomp_test_stub_data, sizeof(*seccomp_test_stub_data));
 	return false;
@@ -460,12 +548,55 @@ __uml_setup("seccomp=", uml_seccomp_config,
 "    This is insecure and should only be used with a trusted userspace\n\n"
 );
 
+extern long elf_aux_min_sigstack;
+
+/*
+ * Report, and sanity-check, the size of the alternate signal stack the stub
+ * gets against what this host says a signal frame can need.
+ *
+ * The stub takes its signals on an alternate stack that is part of struct
+ * stub_data, whose size is fixed at compile time. The frame written there is
+ * built by the host from the host's CPU features and from what the guest has
+ * executed inside the stub -- neither of which UML chooses. On arm64 the same
+ * kernel reports AT_MINSIGSTKSZ of 4720 on one CPU model and 9984 on another,
+ * so a compile-time size taken from a measurement on one machine is not a
+ * design, it is a coincidence waiting to end.
+ *
+ * This does not refuse to boot when the area is smaller than AT_MINSIGSTKSZ,
+ * because that number is the host's worst case (it is computed with every
+ * optional record present at the maximum vector length) and the frames actually
+ * written are usually far smaller -- 4576 bytes on both hosts measured. A frame
+ * that genuinely does not fit fails loudly on its own: the host cannot write it,
+ * the stub dies, and UML reports that. What is worth avoiding is being
+ * surprised, so say the numbers out loud at boot instead.
+ *
+ * SECCOMP mode is stricter and is handled separately: there the frame has to
+ * land inside sigstack[] alone, and init_seccomp() checks that it did.
+ */
+static void __init check_stub_sigstack(void)
+{
+	unsigned long have = STUB_DATA_PAGES * UM_KERN_PAGE_SIZE;
+
+	if (!elf_aux_min_sigstack) {
+		os_info("Stub signal stack: %lu bytes (host publishes no AT_MINSIGSTKSZ)\n",
+			have);
+		return;
+	}
+
+	os_info("Stub signal stack: %lu bytes, host AT_MINSIGSTKSZ %ld%s\n",
+		have, elf_aux_min_sigstack,
+		have < (unsigned long)elf_aux_min_sigstack ?
+			" -- SMALLER than this host's worst case" : "");
+}
+
 void __init os_early_checks(void)
 {
 	int pid;
 
 	/* Print out the core dump limits early */
 	check_coredump_limit();
+
+	check_stub_sigstack();
 
 	/* Need to check this early because mmapping happens before the
 	 * kernel is running.

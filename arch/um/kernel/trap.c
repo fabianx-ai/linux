@@ -142,7 +142,6 @@ int handle_page_fault(unsigned long address, unsigned long ip,
 {
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
-	pmd_t *pmd;
 	pte_t *pte;
 	int err = -EFAULT;
 	unsigned int flags = FAULT_FLAG_DEFAULT;
@@ -160,8 +159,18 @@ int handle_page_fault(unsigned long address, unsigned long ip,
 		flags |= FAULT_FLAG_USER;
 retry:
 	vma = um_lock_mm_and_find_vma(mm, address, is_user);
-	if (!vma)
+	if (!vma) {
+		/*
+		 * No containing vma: the discriminator result is the
+		 * absence itself (genuine unmapped access, or a stack
+		 * growth the guard gap refused).
+		 */
+		if (is_user)
+			pr_err_ratelimited(
+				"uml-segv: addr=%016lx ip=%016lx err=%d code=%d vma=none pte=none\n",
+				address, ip, err, *code_out);
 		goto out_nosemaphore;
+	}
 
 	*code_out = SEGV_ACCERR;
 	if (is_write) {
@@ -203,9 +212,19 @@ retry:
 			goto retry;
 		}
 
-		pmd = pmd_off(mm, address);
-		pte = pte_offset_kernel(pmd, address);
-	} while (!pte_present(*pte));
+		/*
+		 * Re-derive the pte with the fully-checked walker: an
+		 * intermediate level can vanish under us (the deferred
+		 * NEEDSYNC teardown clears entries and frees tables
+		 * outside our mmap read lock during fork-heavy work),
+		 * and descending through a cleared pud/pmd derives the
+		 * next pointer from __va(0) and dereferences arbitrary
+		 * kernel text as a table entry ("Kernel tried to access
+		 * user memory" from this walk). virt_to_pte returns
+		 * NULL for any empty level; redo the fault then.
+		 */
+		pte = virt_to_pte(mm, address);
+	} while (pte == NULL || !pte_present(*pte));
 	err = 0;
 	/*
 	 * The below warning was added in place of
@@ -220,6 +239,28 @@ retry:
 #endif
 
 out:
+	if (is_user && err) {
+		/*
+		 * Discriminator for delivered user SIGSEGVs: pairs the
+		 * fault with the vma state (mapped? writable? exec?) and
+		 * the pte presence at delivery, so misclassified or
+		 * spurious fault classes are distinguishable from
+		 * genuine ones in the log.
+		 */
+		struct vm_area_struct *dvma = find_vma(mm, address);
+		pte_t *dpte = virt_to_pte(mm, address);
+		int invma = dvma && dvma->vm_start <= address;
+
+		pr_err_ratelimited(
+			"uml-segv: addr=%016lx ip=%016lx err=%d code=%d vma=%s[%016lx-%016lx flags=%08lx] pte=%s\n",
+			address, ip, err, *code_out,
+			invma ? "" : "!",
+			invma ? dvma->vm_start : 0UL,
+			invma ? dvma->vm_end : 0UL,
+			invma ? dvma->vm_flags : 0UL,
+			dpte ? (pte_present(*dpte) ? "present" : "absent") :
+			       "none");
+	}
 	mmap_read_unlock(mm);
 out_nosemaphore:
 	return err;
@@ -332,11 +373,13 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 	else if (current->pagefault_disabled) {
 		if (!mc) {
 			show_regs(container_of(regs, struct pt_regs, regs));
-			panic("Segfault with pagefaults disabled but no mcontext");
+			panic("Segfault with pagefaults disabled but no mcontext: addr 0x%lx, ip 0x%lx, %s",
+			      address, ip, is_write ? "write" : "read");
 		}
 		if (!current->thread.segv_continue) {
 			show_regs(container_of(regs, struct pt_regs, regs));
-			panic("Segfault without recovery target");
+			panic("Segfault without recovery target: addr 0x%lx, ip 0x%lx, %s",
+			      address, ip, is_write ? "write" : "read");
 		}
 		mc_set_rip(mc, current->thread.segv_continue);
 		current->thread.segv_continue = NULL;
@@ -344,7 +387,8 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 	}
 	else if (current->mm == NULL) {
 		show_regs(container_of(regs, struct pt_regs, regs));
-		panic("Segfault with no mm");
+		panic("Segfault with no mm: addr 0x%lx, ip 0x%lx, %s",
+			      address, ip, is_write ? "write" : "read");
 	}
 	else if (!is_user && address > PAGE_SIZE && address < TASK_SIZE) {
 		show_regs(container_of(regs, struct pt_regs, regs));
