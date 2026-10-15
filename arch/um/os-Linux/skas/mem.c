@@ -65,7 +65,11 @@ static inline unsigned long *check_init_stack(struct mm_id * mm_idp,
 	return stack;
 }
 
-static unsigned long syscall_regs[MAX_REG_NR];
+/*
+ * Sized like exec_regs (UM_GP_SLOTS): get_safe_registers() copies the
+ * backend's full gp frame, internal slots included, into this buffer.
+ */
+static unsigned long syscall_regs[UM_GP_SLOTS];
 
 static int __init init_syscall_regs(void)
 {
@@ -102,7 +106,7 @@ static inline long do_syscall_stub(struct mm_id *mm_idp)
 			printk(UM_KERN_ERR "Registers -\n");
 			for (i = 0; i < MAX_REG_NR; i++)
 				printk(UM_KERN_ERR "\t%d\t0x%lx\n", i, syscall_regs[i]);
-			panic("%s : PTRACE_SETREGS failed, errno = %d\n",
+			panic("%s : ptrace_setregs failed, errno = %d\n",
 			      __func__, -n);
 		}
 
