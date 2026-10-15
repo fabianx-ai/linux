@@ -151,6 +151,110 @@ static __always_inline void trap_myself(void)
 }
 
 /*
+ * Handoff-word atomics for <stub-futex.h>.
+ *
+ * These carry the ordering the elided futex syscalls used to provide. On this
+ * architecture that is a real obligation, not a formality: without the
+ * acquire on the load, a reader that observes the ownership flip may still
+ * read stale syscall_data or signal fields, a failure x86-TSO testing
+ * structurally cannot reproduce. Hence LDAR for the load and LDAXR/STLXR
+ * pairs for the read-modify-writes, giving them acquire+release semantics by
+ * construction.
+ *
+ * Hand-written rather than the compiler builtins because -moutline-atomics
+ * (default on arm64) turns __atomic_* into libgcc helper calls, and a call
+ * out of .__syscall_stub lands nowhere once the stub page is copied to
+ * STUB_CODE.
+ */
+static __always_inline unsigned int
+stub_futex_load_acquire(volatile unsigned int *addr)
+{
+	unsigned int val;
+
+	__asm__ volatile("ldar	%w0, [%1]"
+		: "=r" (val)
+		: "r" (addr)
+		: "memory");
+
+	return val;
+}
+#define stub_futex_load_acquire stub_futex_load_acquire
+
+static __always_inline unsigned int
+stub_futex_xchg(volatile unsigned int *addr, unsigned int val)
+{
+	unsigned int old, fail;
+
+	__asm__ volatile(
+		"1:	ldaxr	%w0, [%2]\n"
+		"	stlxr	%w1, %w3, [%2]\n"
+		"	cbnz	%w1, 1b\n"
+		: "=&r" (old), "=&r" (fail)
+		: "r" (addr), "r" (val)
+		: "memory");
+
+	return old;
+}
+
+static __always_inline unsigned int
+stub_futex_fetch_or(volatile unsigned int *addr, unsigned int bits)
+{
+	unsigned int old, newval, fail;
+
+	__asm__ volatile(
+		"1:	ldaxr	%w0, [%3]\n"
+		"	orr	%w1, %w0, %w4\n"
+		"	stlxr	%w2, %w1, [%3]\n"
+		"	cbnz	%w2, 1b\n"
+		: "=&r" (old), "=&r" (newval), "=&r" (fail)
+		: "r" (addr), "r" (bits)
+		: "memory");
+
+	return old;
+}
+
+/* Be polite to an SMT or virtualized host; on bare cores it is a cheap nop. */
+static __always_inline void stub_relax(void)
+{
+	__asm__ volatile("yield");
+}
+#define stub_relax stub_relax
+
+/*
+ * The generic timer's virtual counter: constant-rate, synchronized across
+ * cores, and readable at EL0 on any Linux host because the vDSO clock needs
+ * it too (CNTKCTL_EL1.EL0VCTEN). The CPU clock is none of those things -- it
+ * scales by an order of magnitude under the governor on phone-class SoCs,
+ * which is exactly why the spin bound is expressed in these ticks.
+ *
+ * No ISB before the read: the barrier would cost more than the few cycles of
+ * speculation slack it removes, and a microsecond-scale budget does not care.
+ */
+static __always_inline unsigned long stub_cycles(void)
+{
+	unsigned long val;
+
+	__asm__ volatile("mrs	%0, cntvct_el0" : "=r" (val));
+
+	return val;
+}
+#define stub_cycles stub_cycles
+
+/*
+ * CNTFRQ_EL0 is readable wherever CNTVCT_EL0 is. Firmware that leaves it
+ * unprogrammed reads as 0, which flows through the budget arithmetic as
+ * "never spin" -- a safe degradation, not a crash.
+ */
+static __always_inline unsigned long stub_cycles_per_us(void)
+{
+	unsigned long freq;
+
+	__asm__ volatile("mrs	%0, cntfrq_el0" : "=r" (freq));
+
+	return freq / 1000000;
+}
+
+/*
  * The stub data page sits directly above the stub code page; adrp
  * yields the current page, add one page size.
  */
